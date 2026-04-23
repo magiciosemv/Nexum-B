@@ -1,0 +1,25 @@
+# Build artifacts
+target/
+test-ledger/
+
+# Dependencies
+node_modules/
+
+# Privacy / local config
+.claude/
+
+# Design documents (保密)
+nexum-scheme-b-v3-design.md
+nexum-scheme-b-v3-impl.md
+nexum-scheme-b-v3.skill
+CLAUDE.md
+docs/
+
+# Windows Zone.Identifier
+*:Zone.Identifier
+
+# Rust compiler crash logs
+rustc-ice-*.txt
+
+# npm lock (app uses pnpm)
+package-lock.json

@@ -1,0 +1,2045 @@
+{
+  "address": "BN9cg69CyigYuczJNjK3MVWRHdVMELaN55wpJz8KKi4P",
+  "metadata": {
+    "name": "nexum_pool",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Nexum Protocol — Private OTC Settlement Pool"
+  },
+  "instructions": [
+    {
+      "name": "accept_commit",
+      "discriminator": [
+        117,
+        185,
+        156,
+        93,
+        209,
+        121,
+        24,
+        159
+      ],
+      "accounts": [
+        {
+          "name": "s",
+          "docs": [
+            "Party B (counterparty) must sign and own ledger_b."
+          ],
+          "signer": true
+        },
+        {
+          "name": "ledger_a",
+          "docs": [
+            "Party A's ledger — must be PendingInitiator, transitions to BothPending. Boxed."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  100,
+                  103,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "commit_slot.initiator",
+                "account": "CommitSlot"
+              },
+              {
+                "kind": "account",
+                "path": "commit_slot.asset_a_mint",
+                "account": "CommitSlot"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ledger_b",
+          "docs": [
+            "Party B's ledger — must be Active, will transition to PendingCounterparty. Boxed."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  100,
+                  103,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ledger_b.owner",
+                "account": "UserLedger"
+              },
+              {
+                "kind": "account",
+                "path": "commit_slot.asset_b_mint",
+                "account": "CommitSlot"
+              }
+            ]
+          }
+        },
+        {
+          "name": "commit_slot",
+          "docs": [
+            "The CommitSlot — must be WaitingAccept. Boxed."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  115,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a"
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a.pending_nonce",
+                "account": "UserLedger"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "cancel_initiate",
+      "discriminator": [
+        225,
+        4,
+        115,
+        106,
+        206,
+        137,
+        108,
+        234
+      ],
+      "accounts": [
+        {
+          "name": "s",
+          "docs": [
+            "Only the initiator can cancel (and only after expiry). Must be mut for rent refund."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "ledger_a",
+          "docs": [
+            "Party A's ledger — must be PendingInitiator."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  100,
+                  103,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a.owner",
+                "account": "UserLedger"
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a.mint",
+                "account": "UserLedger"
+              }
+            ]
+          }
+        },
+        {
+          "name": "commit_slot",
+          "docs": [
+            "CommitSlot to close — rent returned to Party A."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  115,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a"
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a.pending_nonce",
+                "account": "UserLedger"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "cancel_mutual",
+      "discriminator": [
+        162,
+        255,
+        214,
+        97,
+        3,
+        86,
+        149,
+        76
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Either Party A or Party B can call."
+          ],
+          "signer": true
+        },
+        {
+          "name": "ledger_a",
+          "docs": [
+            "Party A's ledger — must be BothPending. Boxed to reduce BPF stack frame."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  100,
+                  103,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "commit_slot.initiator",
+                "account": "CommitSlot"
+              },
+              {
+                "kind": "account",
+                "path": "commit_slot.asset_a_mint",
+                "account": "CommitSlot"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ledger_b",
+          "docs": [
+            "Party B's ledger — must be PendingCounterparty. Boxed to reduce BPF stack frame."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  100,
+                  103,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "commit_slot.counterparty",
+                "account": "CommitSlot"
+              },
+              {
+                "kind": "account",
+                "path": "commit_slot.asset_b_mint",
+                "account": "CommitSlot"
+              }
+            ]
+          }
+        },
+        {
+          "name": "commit_slot",
+          "docs": [
+            "CommitSlot — must be BothLocked. Boxed. Clock check moved to handler."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  115,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a"
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a.pending_nonce",
+                "account": "UserLedger"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_proof_data",
+      "discriminator": [
+        202,
+        201,
+        76,
+        254,
+        204,
+        166,
+        67,
+        119
+      ],
+      "accounts": [
+        {
+          "name": "proof_data",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  111,
+                  102,
+                  115
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "params.nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "CreateProofDataParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "create_user_ledger",
+      "discriminator": [
+        91,
+        133,
+        100,
+        35,
+        153,
+        179,
+        100,
+        42
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "ledger",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  100,
+                  103,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "execute_settle_b",
+      "discriminator": [
+        59,
+        57,
+        10,
+        160,
+        226,
+        234,
+        39,
+        123
+      ],
+      "accounts": [
+        {
+          "name": "ledger_a",
+          "docs": [
+            "Party A's ledger — must be BothPending. Boxed to reduce BPF stack frame."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  100,
+                  103,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "commit_slot.initiator",
+                "account": "CommitSlot"
+              },
+              {
+                "kind": "account",
+                "path": "commit_slot.asset_a_mint",
+                "account": "CommitSlot"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ledger_b",
+          "docs": [
+            "Party B's ledger — must be PendingCounterparty. Boxed to reduce BPF stack frame."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  100,
+                  103,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "commit_slot.counterparty",
+                "account": "CommitSlot"
+              },
+              {
+                "kind": "account",
+                "path": "commit_slot.asset_b_mint",
+                "account": "CommitSlot"
+              }
+            ]
+          }
+        },
+        {
+          "name": "commit_slot",
+          "docs": [
+            "CommitSlot — must be BothLocked. Closed on success, rent to fee_payer. Boxed."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  115,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a"
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a.pending_nonce",
+                "account": "UserLedger"
+              }
+            ]
+          }
+        },
+        {
+          "name": "proof_data",
+          "docs": [
+            "Proof data account — holds ZK proofs and ciphertexts (1537B). Boxed.",
+            "PDA seeds: [\"proofs\", nonce.to_le_bytes()]",
+            "Created off-chain by the submitting party before calling execute."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  111,
+                  102,
+                  115
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "p.nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "settlement_record",
+          "docs": [
+            "Settlement record — permanent on-chain evidence."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "commit_slot"
+              },
+              {
+                "kind": "arg",
+                "path": "p.settlement_nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "zk_verifier_program",
+          "docs": [
+            "ZK verifier program — called via CPI to verify Groth16 proofs.",
+            "nexum_pool does not depend on zk_verifier crate (avoids groth16-solana bloat)."
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "SettleAtomicParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "initialize_pool",
+      "discriminator": [
+        95,
+        180,
+        10,
+        172,
+        84,
+        174,
+        232,
+        40
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initiate_commit",
+      "discriminator": [
+        63,
+        80,
+        240,
+        56,
+        145,
+        135,
+        194,
+        84
+      ],
+      "accounts": [
+        {
+          "name": "s",
+          "docs": [
+            "Party A (initiator) must sign and own the ledger."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "ledger_a",
+          "docs": [
+            "Party A's ledger — must be Active, will be set to PendingInitiator."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  100,
+                  103,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a.owner",
+                "account": "UserLedger"
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a.mint",
+                "account": "UserLedger"
+              }
+            ]
+          }
+        },
+        {
+          "name": "commit_slot",
+          "docs": [
+            "New CommitSlot — stores the commitment hash and metadata."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  115,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ledger_a"
+              },
+              {
+                "kind": "arg",
+                "path": "p.nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "InitiateCommitParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "write_proof_data",
+      "discriminator": [
+        192,
+        130,
+        176,
+        61,
+        100,
+        98,
+        217,
+        13
+      ],
+      "accounts": [
+        {
+          "name": "proof_data",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  111,
+                  102,
+                  115
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "params.nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Only the authority who created the ProofData can write to it."
+          ],
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "WriteProofDataParams"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "CommitSlot",
+      "discriminator": [
+        143,
+        30,
+        199,
+        156,
+        46,
+        80,
+        193,
+        195
+      ]
+    },
+    {
+      "name": "ProofData",
+      "discriminator": [
+        174,
+        109,
+        121,
+        220,
+        193,
+        80,
+        148,
+        121
+      ]
+    },
+    {
+      "name": "ProtocolConfig",
+      "discriminator": [
+        207,
+        91,
+        250,
+        28,
+        152,
+        179,
+        215,
+        209
+      ]
+    },
+    {
+      "name": "SettlementRecord",
+      "discriminator": [
+        172,
+        159,
+        67,
+        74,
+        96,
+        85,
+        37,
+        205
+      ]
+    },
+    {
+      "name": "UserLedger",
+      "discriminator": [
+        185,
+        84,
+        101,
+        128,
+        8,
+        6,
+        160,
+        83
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AcceptCommitEvent",
+      "discriminator": [
+        113,
+        48,
+        88,
+        38,
+        196,
+        230,
+        0,
+        34
+      ]
+    },
+    {
+      "name": "CancelInitiateEvent",
+      "discriminator": [
+        236,
+        111,
+        215,
+        97,
+        149,
+        218,
+        25,
+        116
+      ]
+    },
+    {
+      "name": "CancelMutualEvent",
+      "discriminator": [
+        239,
+        38,
+        99,
+        89,
+        159,
+        6,
+        159,
+        56
+      ]
+    },
+    {
+      "name": "ExecuteSchemeBEvent",
+      "discriminator": [
+        222,
+        73,
+        234,
+        24,
+        48,
+        101,
+        132,
+        142
+      ]
+    },
+    {
+      "name": "InitiateCommitEvent",
+      "discriminator": [
+        140,
+        74,
+        125,
+        10,
+        150,
+        236,
+        192,
+        234
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Unauthorized: signer does not match expected owner"
+    },
+    {
+      "code": 6001,
+      "name": "ProtocolPaused",
+      "msg": "Protocol is paused"
+    },
+    {
+      "code": 6002,
+      "name": "SelfSettle",
+      "msg": "Self-settlement is not allowed"
+    },
+    {
+      "code": 6003,
+      "name": "LedgerNotActive",
+      "msg": "Ledger is not in Active status"
+    },
+    {
+      "code": 6004,
+      "name": "LedgerNotPending",
+      "msg": "Ledger is not in PendingInitiator status"
+    },
+    {
+      "code": 6005,
+      "name": "LedgerNotBothPending",
+      "msg": "Ledger is not in BothPending status"
+    },
+    {
+      "code": 6006,
+      "name": "MintMismatch",
+      "msg": "Ledger mint does not match"
+    },
+    {
+      "code": 6007,
+      "name": "SlotNotWaiting",
+      "msg": "CommitSlot is not in WaitingAccept status"
+    },
+    {
+      "code": 6008,
+      "name": "SlotNotLocked",
+      "msg": "CommitSlot is not in BothLocked status"
+    },
+    {
+      "code": 6009,
+      "name": "WrongCounterparty",
+      "msg": "Wrong counterparty for this commit slot"
+    },
+    {
+      "code": 6010,
+      "name": "ExpiryInPast",
+      "msg": "Expiry timestamp is in the past"
+    },
+    {
+      "code": 6011,
+      "name": "WindowTooShort",
+      "msg": "Initiate window is too short (min 30s)"
+    },
+    {
+      "code": 6012,
+      "name": "WindowTooLong",
+      "msg": "Initiate window is too long (max 60s)"
+    },
+    {
+      "code": 6013,
+      "name": "InitiateExpired",
+      "msg": "Initiate has expired"
+    },
+    {
+      "code": 6014,
+      "name": "WindowNotExpired",
+      "msg": "Initiate window has not expired yet — cannot cancel"
+    },
+    {
+      "code": 6015,
+      "name": "ExecuteWindowExpired",
+      "msg": "Execute window has expired"
+    },
+    {
+      "code": 6016,
+      "name": "ExecuteWindowActive",
+      "msg": "Execute window is still active — cannot cancel"
+    },
+    {
+      "code": 6017,
+      "name": "EmptyCommitmentHash",
+      "msg": "Commitment hash cannot be all zeros"
+    },
+    {
+      "code": 6018,
+      "name": "CommitmentMismatch",
+      "msg": "Commitment hash mismatch — amount differs from initial commitment"
+    },
+    {
+      "code": 6019,
+      "name": "InvalidSlotCount",
+      "msg": "Invalid slot count (must be 1-20)"
+    },
+    {
+      "code": 6020,
+      "name": "TooManySlots",
+      "msg": "Too many reserved slots"
+    },
+    {
+      "code": 6021,
+      "name": "SlotNotReleasable",
+      "msg": "Slot is not releasable"
+    },
+    {
+      "code": 6022,
+      "name": "InvalidNonce",
+      "msg": "Proof data nonce does not match instruction nonce"
+    },
+    {
+      "code": 6023,
+      "name": "InvalidChunkIndex",
+      "msg": "Chunk index must be 0-3"
+    },
+    {
+      "code": 6024,
+      "name": "InvalidChunkSize",
+      "msg": "Chunk data size does not match expected size for this chunk index"
+    },
+    {
+      "code": 6025,
+      "name": "ProofVerificationFailed",
+      "msg": "ZK proof verification failed — invalid balance transition proof"
+    },
+    {
+      "code": 6026,
+      "name": "InvalidZkVerifierProgram",
+      "msg": "Invalid ZK verifier program ID"
+    }
+  ],
+  "types": [
+    {
+      "name": "AcceptCommitEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "slot_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "initiator",
+            "type": "pubkey"
+          },
+          {
+            "name": "counterparty",
+            "type": "pubkey"
+          },
+          {
+            "name": "locked_at",
+            "type": "i64"
+          },
+          {
+            "name": "execute_expiry",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CancelInitiateEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "slot_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "initiator",
+            "type": "pubkey"
+          },
+          {
+            "name": "counterparty",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CancelMutualEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "slot_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "initiator",
+            "type": "pubkey"
+          },
+          {
+            "name": "counterparty",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CommitSlot",
+      "docs": [
+        "CommitSlot — the minimal 204-byte commitment anchor for Scheme B.",
+        "",
+        "PDA seeds: [\"cslot\", ledger_a_key(32B), nonce_le8(8B)]",
+        "",
+        "Only stores a hash + metadata, no ciphertexts, no ZK proofs.",
+        "Rent is refunded when the slot is closed (execute or cancel).",
+        "",
+        "Layout (data only, 196 bytes):",
+        "initiator        32B",
+        "counterparty     32B",
+        "asset_a_mint     32B",
+        "asset_b_mint     32B",
+        "commitment_hash  32B   SHA-256 of the 120-byte commitment input",
+        "expiry_init       8B   When the initiate window closes",
+        "execute_expiry    8B   When the execute window closes (filled on accept)",
+        "nonce             8B   Anti-collision for PDA derivation",
+        "both_locked_at    8B   Timestamp when both parties locked (filled on accept)",
+        "status            1B   SlotStatus enum",
+        "bump              1B   PDA bump seed",
+        "Total data: 196 bytes",
+        "With discriminator: 204 bytes"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "initiator",
+            "type": "pubkey"
+          },
+          {
+            "name": "counterparty",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_a_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_b_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "commitment_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "expiry_init",
+            "type": "i64"
+          },
+          {
+            "name": "execute_expiry",
+            "type": "i64"
+          },
+          {
+            "name": "nonce",
+            "type": "u64"
+          },
+          {
+            "name": "both_locked_at",
+            "type": "i64"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "SlotStatus"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreateProofDataParams",
+      "docs": [
+        "Lightweight params — only the nonce. Proof arrays initialized to zero.",
+        "",
+        "Production flow: proofs are written by the zk_verifier via CPI after",
+        "Groth16 verification. For testing, zero-filled proof data is accepted",
+        "by execute_settle_b since ZK verification is not yet integrated.",
+        "",
+        "The 1232-byte Solana instruction data limit prevents passing 2048 bytes",
+        "of proof+ciphertext data as instruction parameters."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nonce",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ExecuteSchemeBEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "settlement_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "commit_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "initiator",
+            "type": "pubkey"
+          },
+          {
+            "name": "counterparty",
+            "type": "pubkey"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "InitiateCommitEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "slot_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "initiator",
+            "type": "pubkey"
+          },
+          {
+            "name": "counterparty",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_a",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_b",
+            "type": "pubkey"
+          },
+          {
+            "name": "expiry",
+            "type": "i64"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "InitiateCommitParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nonce",
+            "type": "u64"
+          },
+          {
+            "name": "counterparty",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_b_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "commitment_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "expiry_init",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LedgerStatus",
+      "docs": [
+        "Ledger status enum — shared by Scheme A and Scheme B."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "PendingInitiator"
+          },
+          {
+            "name": "BothPending"
+          },
+          {
+            "name": "PendingCounterparty"
+          },
+          {
+            "name": "Emergency"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProofData",
+      "docs": [
+        "Holds ZK proof and ciphertext data for execute_settle_b.",
+        "Created off-chain and passed as an account to avoid BPF stack overflow",
+        "from deserializing large arrays as instruction parameters.",
+        "",
+        "PDA seeds: [\"proofs\", commit_slot_key, nonce_le8]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "proof_a",
+            "type": {
+              "array": [
+                "u8",
+                256
+              ]
+            }
+          },
+          {
+            "name": "new_ct_a_lo",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "new_ct_a_hi",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "audit_ct_a_lo",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "audit_ct_a_hi",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "proof_b",
+            "type": {
+              "array": [
+                "u8",
+                256
+              ]
+            }
+          },
+          {
+            "name": "new_ct_b_lo",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "new_ct_b_hi",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "audit_ct_b_lo",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "audit_ct_b_hi",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "nonce",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProtocolConfig",
+      "docs": [
+        "Protocol-level configuration, stored in a single PDA.",
+        "PDA seeds: [\"nexum_config\"]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_paused",
+            "type": "bool"
+          },
+          {
+            "name": "min_init_window",
+            "type": "i64"
+          },
+          {
+            "name": "max_init_window",
+            "type": "i64"
+          },
+          {
+            "name": "execute_window",
+            "type": "i64"
+          },
+          {
+            "name": "clock_tolerance",
+            "type": "i64"
+          },
+          {
+            "name": "max_version_slots",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SettleAtomicParams",
+      "docs": [
+        "Params for execute_settle_b.",
+        "Large proof/ciphertext arrays come from the ProofData account to avoid BPF stack overflow.",
+        "Public balance values are passed here for ZK proof CPI verification."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nonce",
+            "type": "u64"
+          },
+          {
+            "name": "transfer_lo",
+            "type": "u32"
+          },
+          {
+            "name": "transfer_hi",
+            "type": "u32"
+          },
+          {
+            "name": "settlement_nonce",
+            "type": "u64"
+          },
+          {
+            "name": "old_a_lo",
+            "type": "u32"
+          },
+          {
+            "name": "old_a_hi",
+            "type": "u32"
+          },
+          {
+            "name": "new_a_lo",
+            "type": "u32"
+          },
+          {
+            "name": "new_a_hi",
+            "type": "u32"
+          },
+          {
+            "name": "old_b_lo",
+            "type": "u32"
+          },
+          {
+            "name": "old_b_hi",
+            "type": "u32"
+          },
+          {
+            "name": "new_b_lo",
+            "type": "u32"
+          },
+          {
+            "name": "new_b_hi",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SettlementRecord",
+      "docs": [
+        "Permanent on-chain record of a completed settlement.",
+        "PDA seeds: [\"settlement\", commit_slot_or_nonce_key, settlement_nonce_le8]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "party_a",
+            "type": "pubkey"
+          },
+          {
+            "name": "party_b",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_a_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_b_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "transfer_lo",
+            "type": "u32"
+          },
+          {
+            "name": "transfer_hi",
+            "type": "u32"
+          },
+          {
+            "name": "version_a",
+            "type": "u64"
+          },
+          {
+            "name": "version_b",
+            "type": "u64"
+          },
+          {
+            "name": "scheme",
+            "type": {
+              "defined": {
+                "name": "SettlementScheme"
+              }
+            }
+          },
+          {
+            "name": "settled_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SettlementScheme",
+      "docs": [
+        "Distinguishes settlement records by scheme origin."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "SchemeA"
+          },
+          {
+            "name": "SchemeB"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SlotStatus",
+      "docs": [
+        "Status of a CommitSlot — tracks the lifecycle of a Scheme B settlement intent."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "WaitingAccept"
+          },
+          {
+            "name": "BothLocked"
+          },
+          {
+            "name": "Settled"
+          },
+          {
+            "name": "Cancelled"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UserLedger",
+      "docs": [
+        "User encrypted-balance ledger.",
+        "",
+        "Scheme A size: 610 bytes (discriminator 8 + data 602)",
+        "Scheme B adds: 112 bytes of pending fields",
+        "Total: 738 bytes (discriminator 8 + data 714)",
+        "",
+        "Layout:",
+        "owner               32B",
+        "mint                32B",
+        "balance_ct_lo      128B   ElGamal ciphertext ( Baby Jubjub, 4 coordinates × 32B)",
+        "balance_ct_hi      128B",
+        "audit_ct_lo        128B   Last settlement audit ciphertext",
+        "audit_ct_hi        128B",
+        "version              8B   Monotonically increasing",
+        "status               1B   LedgerStatus enum",
+        "last_settlement_id  32B",
+        "bump                 1B",
+        "── Scheme B pending fields (112B) ──",
+        "pending_commitment   32B   Commitment hash (zero when Active)",
+        "pending_expiry        8B   Initiate expiry timestamp",
+        "pending_counterparty 32B   Authorized counterparty pubkey",
+        "pending_asset_b_mint 32B   Counterparty's asset mint",
+        "pending_nonce         8B   CommitSlot nonce"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "balance_ct_lo",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "balance_ct_hi",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "audit_ct_lo",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "audit_ct_hi",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "version",
+            "type": "u64"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "LedgerStatus"
+              }
+            }
+          },
+          {
+            "name": "last_settlement_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "pending_commitment",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "pending_expiry",
+            "type": "i64"
+          },
+          {
+            "name": "pending_counterparty",
+            "type": "pubkey"
+          },
+          {
+            "name": "pending_asset_b_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "pending_nonce",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WriteProofDataParams",
+      "docs": [
+        "Write a chunk of proof/ciphertext data to a ProofData account.",
+        "",
+        "ProofData has 1536 bytes of data arrays, split into 4 chunks:",
+        "Chunk 0: proof_a (256 bytes)",
+        "Chunk 1: new_ct_a_lo(128) + new_ct_a_hi(128) + audit_ct_a_lo(128) + audit_ct_a_hi(128) = 512 bytes",
+        "Chunk 2: proof_b (256 bytes)",
+        "Chunk 3: new_ct_b_lo(128) + new_ct_b_hi(128) + audit_ct_b_lo(128) + audit_ct_b_hi(128) = 512 bytes",
+        "",
+        "This instruction is called after create_proof_data to populate the account",
+        "with real ZK proof + ciphertext data. The account must already exist.",
+        "",
+        "Instruction data size (worst case, chunk 1 or 3):",
+        "8 (discriminator) + 8 (nonce) + 1 (chunk_index) + 4 (vec length) + 512 (data) = 533 bytes",
+        "Well within Solana's 1232-byte instruction data limit."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nonce",
+            "type": "u64"
+          },
+          {
+            "name": "chunk_index",
+            "type": "u8"
+          },
+          {
+            "name": "data",
+            "type": "bytes"
+          }
+        ]
+      }
+    }
+  ]
+}

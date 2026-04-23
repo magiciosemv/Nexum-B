@@ -1,0 +1,16 @@
+1,1,0,main.pub_old_lo
+2,2,0,main.pub_old_hi
+3,3,0,main.pub_new_lo
+4,4,0,main.pub_new_hi
+5,5,0,main.pub_transfer_lo
+6,6,0,main.transfer_lo
+7,7,0,main.transfer_hi
+8,-1,0,main.old_balance_lo
+9,-1,0,main.old_balance_hi
+10,-1,0,main.new_balance_lo
+11,-1,0,main.new_balance_hi
+12,-1,0,main.pub_transfer_hi
+13,8,0,main.old_total
+14,-1,0,main.new_plus_transfer
+15,-1,0,main.old_lo_b0
+16,-1,0,main.old_lo_b1
