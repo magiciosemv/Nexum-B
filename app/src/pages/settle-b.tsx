@@ -67,6 +67,7 @@ export default function SettleBPage({ onBack }: SettleBPageProps) {
   const schemeB = useSchemeB(program, wallet);
 
   const [counterparty, setCounterparty] = useState("");
+  const [assetAMint, setAssetAMint] = useState("");
   const [assetBMint, setAssetBMint] = useState("");
   const [amount, setAmount] = useState("");
   const [cpAmount, setCpAmount] = useState("");
@@ -91,7 +92,7 @@ export default function SettleBPage({ onBack }: SettleBPageProps) {
 
   const handleInitiate = () => {
     if (!counterparty || !assetBMint || !amount) return;
-    schemeB.initiate(counterparty, assetBMint, BigInt(amount));
+    schemeB.initiate(counterparty, assetBMint, BigInt(amount), assetAMint || undefined);
   };
 
   const handleAccept = () => {
@@ -212,7 +213,23 @@ export default function SettleBPage({ onBack }: SettleBPageProps) {
 
               <div>
                 <label className="text-[10px] text-slate-500 uppercase mb-2 block">
-                  Asset B Mint
+                  Asset A Mint (Your Asset)
+                </label>
+                <div className="flex bg-[#0A0F16] border border-slate-700 focus-within:border-emerald-500/50 rounded-sm">
+                  <input
+                    type="text"
+                    value={assetAMint}
+                    onChange={(e) => setAssetAMint(e.target.value)}
+                    disabled={formDisabled}
+                    className="bg-transparent w-full text-xs px-3 py-2 outline-none text-emerald-50 font-mono disabled:opacity-50"
+                    placeholder="Optional — defaults to devnet USDC"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-500 uppercase mb-2 block">
+                  Asset B Mint (Counterparty Asset)
                 </label>
                 <div className="flex bg-[#0A0F16] border border-slate-700 focus-within:border-emerald-500/50 rounded-sm">
                   <input

@@ -57,7 +57,7 @@ export interface SchemeBState {
   logs: string[];
   counterpartyState: CounterpartyState;
   hashValid: boolean | null;
-  initiate: (counterparty: string, assetBMint: string, amount: bigint) => Promise<void>;
+  initiate: (counterparty: string, assetBMint: string, amount: bigint, assetAMint?: string) => Promise<void>;
   verifyAndAccept: (amount: bigint) => Promise<void>;
   cancelInitiate: () => Promise<void>;
   cancelMutual: () => Promise<void>;
@@ -79,10 +79,12 @@ export function useSchemeB(
   const [hashValid, setHashValid] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Store params for execute step
+  // Store params for execute/cancel steps
   const pendingParams = useRef<{
+    ledgerA: PublicKey;
     commitSlotId: PublicKey;
     counterparty: PublicKey;
+    assetAMint: PublicKey;
     assetBMint: PublicKey;
     amount: bigint;
     nonce: bigint;
@@ -108,7 +110,8 @@ export function useSchemeB(
   const initiate = useCallback(async (
     counterparty: string,
     assetBMint: string,
-    amount: bigint
+    amount: bigint,
+    assetAMint?: string,
   ) => {
     if (!program || !wallet) return;
     setError(null);
@@ -117,7 +120,12 @@ export function useSchemeB(
 
     try {
       const cpPubkey = new PublicKey(counterparty);
-      const mintPubkey = new PublicKey(assetBMint);
+      const mintBPubkey = new PublicKey(assetBMint);
+      // asset_a_mint: use provided value, or fall back to a default (USDC on devnet)
+      // In production, this should always be provided by the user
+      const mintAPubkey = assetAMint
+        ? new PublicKey(assetAMint)
+        : new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"); // devnet USDC
       const nonce = BigInt(Date.now());
       const currentSlot = await program.provider.connection.getSlot();
       const chainTime = await program.provider.connection.getBlockTime(currentSlot) ?? Math.floor(Date.now() / 1000);
@@ -128,8 +136,8 @@ export function useSchemeB(
         nonce,
         transfer_amount_lo: lo,
         transfer_amount_hi: hi,
-        asset_a_mint: wallet.publicKey.toBytes(), // simplified: use wallet as mint placeholder
-        asset_b_mint: mintPubkey.toBytes(),
+        asset_a_mint: mintAPubkey.toBytes(),
+        asset_b_mint: mintBPubkey.toBytes(),
         counterparty: cpPubkey.toBytes(),
         expiry_timestamp: expiry,
       });
@@ -142,17 +150,19 @@ export function useSchemeB(
 
       const result = await initiateCommit(program, wallet, {
         counterparty: cpPubkey,
-        asset_a_mint: wallet.publicKey,
-        asset_b_mint: mintPubkey,
+        asset_a_mint: mintAPubkey,
+        asset_b_mint: mintBPubkey,
         transfer_amount: amount,
         expiry_seconds: 45,
       });
 
       setCommitSlotId(result.commit_slot_id.toBase58());
       pendingParams.current = {
+        ledgerA: result.ledger_a,
         commitSlotId: result.commit_slot_id,
         counterparty: cpPubkey,
-        assetBMint: mintPubkey,
+        assetAMint: mintAPubkey,
+        assetBMint: mintBPubkey,
         amount,
         nonce,
         expiry,
@@ -196,7 +206,7 @@ export function useSchemeB(
           nonce: p.nonce,
           transfer_amount_lo: lo,
           transfer_amount_hi: hi,
-          asset_a_mint: wallet.publicKey.toBytes(),
+          asset_a_mint: p.assetAMint.toBytes(),
           asset_b_mint: p.assetBMint.toBytes(),
           counterparty: p.counterparty.toBytes(),
           expiry_timestamp: p.expiry,
@@ -235,7 +245,7 @@ export function useSchemeB(
     try {
       clearInterval(countdownRef.current);
       await sdkCancelInitiate(program, wallet, {
-        ledger_a: pendingParams.current.commitSlotId, // approximate — needs proper ledger PDA
+        ledger_a: pendingParams.current.ledgerA,
         pending_nonce: pendingParams.current.nonce,
       });
       setInitiatorState("CANCELLED");

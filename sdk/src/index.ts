@@ -42,4 +42,5 @@ export { executeSettle, buildProofData } from "./scheme_b/execute";
 export type { ZKProofData, ExecuteParams, ExecuteResult, BuildProofDataParams } from "./scheme_b/execute";
 export { cancelInitiate, cancelMutual } from "./scheme_b/cancel";
 export { VersionSlotManager } from "./scheme_b/version_slots";
+export type { SlotInfo } from "./scheme_b/version_slots";
 export { CommitSlotListener } from "./listeners/commit_listener";

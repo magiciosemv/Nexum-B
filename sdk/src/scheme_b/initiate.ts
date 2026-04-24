@@ -21,6 +21,7 @@ export interface InitiateParams {
 }
 
 export interface InitiateResult {
+  ledger_a: PublicKey;
   commit_slot_id: PublicKey;
   commitment_hash: Uint8Array;
   nonce: bigint;
@@ -83,6 +84,7 @@ export async function initiateCommit(
     .rpc({ commitment: "confirmed" });
 
   return {
+    ledger_a: ledgerA,
     commit_slot_id: commitSlot,
     commitment_hash,
     nonce,
