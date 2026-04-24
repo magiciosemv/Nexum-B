@@ -44,7 +44,12 @@ export async function initiateCommit(
 
   // ── Compute commitment hash (< 1ms off-chain) ─────────────────────
   const nonce = BigInt(Date.now()); // millisecond timestamp, sufficient for uniqueness
-  const expiry = Math.floor(Date.now() / 1000) + params.expiry_seconds;
+  // Use chain time (not local Date.now()) to avoid clock drift causing WindowTooShort.
+  // Add 5s buffer for transaction propagation latency.
+  const currentSlot = await program.provider.connection.getSlot();
+  const chainTime = await program.provider.connection.getBlockTime(currentSlot)
+    ?? Math.floor(Date.now() / 1000);
+  const expiry = chainTime + params.expiry_seconds + 5; // +5s propagation buffer
   const { lo: transfer_lo, hi: transfer_hi } = splitAmount(params.transfer_amount);
 
   const commitment_hash = await computeCommitment({

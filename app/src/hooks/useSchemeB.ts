@@ -121,40 +121,86 @@ export function useSchemeB(
     try {
       const cpPubkey = new PublicKey(counterparty);
       const mintBPubkey = new PublicKey(assetBMint);
-      // asset_a_mint: use provided value, or fall back to a default (USDC on devnet)
-      // In production, this should always be provided by the user
       const mintAPubkey = assetAMint
         ? new PublicKey(assetAMint)
         : new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"); // devnet USDC
-      const nonce = BigInt(Date.now());
-      const currentSlot = await program.provider.connection.getSlot();
-      const chainTime = await program.provider.connection.getBlockTime(currentSlot) ?? Math.floor(Date.now() / 1000);
-      const expiry = chainTime + 45; // 45s window within 30-60 range
-      const { lo, hi } = splitAmount(amount);
 
-      const hash = await computeCommitment({
-        nonce,
-        transfer_amount_lo: lo,
-        transfer_amount_hi: hi,
-        asset_a_mint: mintAPubkey.toBytes(),
-        asset_b_mint: mintBPubkey.toBytes(),
-        counterparty: cpPubkey.toBytes(),
-        expiry_timestamp: expiry,
-      });
+      setInitiatorState("SUBMITTING_INITIATE");
+      log("Submitting initiate_commit (hash computed inside SDK)...");
 
-      const hexHash = Array.from(hash).map(b => b.toString(16).padStart(2, "0")).join("");
+      // SDK handles chain time + commitment hash internally.
+      // No duplicate hash computation here.
+      let result;
+      try {
+        result = await initiateCommit(program, wallet, {
+          counterparty: cpPubkey,
+          asset_a_mint: mintAPubkey,
+          asset_b_mint: mintBPubkey,
+          transfer_amount: amount,
+          expiry_seconds: 55, // 55+5=60s = max window, gives counterparty max time to accept
+        });
+      } catch (err: any) {
+        // "already been processed" = tx succeeded but RPC returned duplicate error.
+        // Treat as success — the ledger is now locked.
+        if (err.message?.includes("already been processed")) {
+          log("Transaction submitted (confirming on-chain)...");
+          // Wait briefly then check ledger state to confirm
+          await new Promise(r => setTimeout(r, 2000));
+          const [ledgerA] = findLedgerPDA(wallet.publicKey, mintAPubkey, program.programId);
+          const ledgerInfo = await program.account.userLedger.fetch(ledgerA);
+          const status = (ledgerInfo as any).status as any;
+          if (status?.pendingInitiator !== undefined) {
+            log("Ledger confirmed locked (PendingInitiator) — initiate succeeded.");
+            // Read pending_nonce from raw on-chain data (offset 730 in UserLedger account)
+            const ledgerAccountInfo = await program.provider.connection.getAccountInfo(ledgerA);
+            const rawNonce = ledgerAccountInfo!.data.readBigUInt64LE(730);
+            const [csPda] = findCommitSlotPDA(ledgerA, rawNonce, program.programId);
+            setCommitSlotId(csPda.toBase58());
+            pendingParams.current = {
+              ledgerA,
+              commitSlotId: csPda,
+              counterparty: cpPubkey,
+              assetAMint: mintAPubkey,
+              assetBMint: mintBPubkey,
+              amount,
+              nonce: rawNonce,
+              expiry: 0,
+            };
+            setInitiatorState("WAITING_ACCEPT");
+            setCountdown(55);
+            let remaining = 55;
+            countdownRef.current = setInterval(() => {
+              remaining--;
+              setCountdown(remaining);
+              if (remaining <= 0) {
+                clearInterval(countdownRef.current);
+                setInitiatorState("TIMEOUT_EXPIRED");
+                log("Initiate window expired. Call cancelInitiate to unlock.");
+              }
+            }, 1000);
+            // Poll CommitSlot for counterparty accept
+            const pollInterval = setInterval(async () => {
+              try {
+                const slotInfo = await program.account.commitSlot.fetch(csPda);
+                const slotStatus = (slotInfo as any).status as any;
+                if (slotStatus?.bothLocked !== undefined) {
+                  clearInterval(pollInterval);
+                  clearInterval(countdownRef.current);
+                  setInitiatorState("BOTH_LOCKED");
+                  log("Counterparty accepted! Both ledgers locked (BothLocked).");
+                }
+              } catch { /* retry */ }
+            }, 3000);
+            setTimeout(() => clearInterval(pollInterval), 70000);
+            return;
+          }
+        }
+        throw err; // Re-throw if not "already processed"
+      }
+
+      const hexHash = Array.from(result.commitment_hash).map(b => b.toString(16).padStart(2, "0")).join("");
       log(`Commitment hash: ${hexHash.slice(0, 16)}...`);
       setCommitmentHash(hexHash);
-      setInitiatorState("SUBMITTING_INITIATE");
-      log("Submitting initiate_commit...");
-
-      const result = await initiateCommit(program, wallet, {
-        counterparty: cpPubkey,
-        asset_a_mint: mintAPubkey,
-        asset_b_mint: mintBPubkey,
-        transfer_amount: amount,
-        expiry_seconds: 45,
-      });
 
       setCommitSlotId(result.commit_slot_id.toBase58());
       pendingParams.current = {
@@ -164,15 +210,15 @@ export function useSchemeB(
         assetAMint: mintAPubkey,
         assetBMint: mintBPubkey,
         amount,
-        nonce,
-        expiry,
+        nonce: result.nonce,
+        expiry: result.expiry,
       };
 
       setInitiatorState("WAITING_ACCEPT");
-      setCountdown(45);
-      log("Waiting for counterparty to accept (45s countdown)...");
+      setCountdown(55);
+      log("Waiting for counterparty to accept (55s countdown)...");
 
-      let remaining = 45;
+      let remaining = 55;
       countdownRef.current = setInterval(() => {
         remaining--;
         setCountdown(remaining);
@@ -182,6 +228,23 @@ export function useSchemeB(
           log("Initiate window expired. Call cancelInitiate to unlock.");
         }
       }, 1000);
+
+      // Poll CommitSlot status to detect counterparty accept
+      const slotPda = result.commit_slot_id;
+      const pollInterval = setInterval(async () => {
+        try {
+          const slotInfo = await program.account.commitSlot.fetch(slotPda);
+          const slotStatus = (slotInfo as any).status as any;
+          if (slotStatus?.bothLocked !== undefined) {
+            clearInterval(pollInterval);
+            clearInterval(countdownRef.current);
+            setInitiatorState("BOTH_LOCKED");
+            log("Counterparty accepted! Both ledgers locked (BothLocked).");
+          }
+        } catch { /* ignore fetch errors, will retry */ }
+      }, 3000);
+      // Auto-stop polling after 70 seconds
+      setTimeout(() => clearInterval(pollInterval), 70000);
     } catch (err: any) {
       setError(err.message);
       setInitiatorState("ERROR");
