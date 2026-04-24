@@ -23,3 +23,7 @@ rustc-ice-*.txt
 
 # npm lock (app uses pnpm)
 package-lock.json
+.gstack/
+
+# Frontend build output
+app/dist/

@@ -1,0 +1,756 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { 
+  Globe, ArrowRight, ShieldCheck, Zap, EyeOff, Code2, 
+  ArrowLeft, Terminal, Loader2, CheckCircle2, Lock, 
+  Activity, ArrowRightLeft, Database, Key, Cpu, Hash, 
+  CheckSquare, AlertTriangle, Eye, User, Wallet, Shield, Link, Clock
+} from 'lucide-react';
+
+// --- 辅助函数：生成伪造哈希用于UI展示 ---
+const generateHash = (len = 64) => Array.from({length: len}, () => Math.floor(Math.random()*16).toString(16)).join('');
+
+// --- 多语言词典 (用于首页) ---
+const translations = {
+  zh: {
+    nav: { app: "进入生产环境" },
+    hero: {
+      badge: "Production Ready v3.0",
+      title: "零明文。零信任。100% 合规。",
+      subtitle: "Solana 上首个基于加密余额池与极简承诺锚点的机构级 OTC 结算协议。交易意图绝密，彻底消除免费期权。",
+      cta: "启动结算引擎",
+      docs: "阅读实施文档"
+    },
+    features: {
+      f1: { title: "池内结算零明文", desc: "全程无 SPL 转账。基于 Baby Jubjub ElGamal 加密，链上仅更新 128B 密文，结合 Groth16 ZK 保证守恒。" },
+      f2: { title: "对称双向锁定 (Dual-Lock)", desc: "方案 B 核心：accept_commit 后双方余额强制同步锁定，彻底消除传统原子交换中的“观望免费期权”问题。" },
+      f3: { title: "版本槽并发引擎", desc: "做市商专属：预留 VersionSlot PDA 打破 ZK 串行限制，支持并行生成多份证明，吞吐量提升 3.5 倍以上。" }
+    }
+  },
+  en: {
+    nav: { app: "Launch Production" },
+    hero: {
+      badge: "Production Ready v3.0",
+      title: "Zero Text. Zero Trust. 100% Compliant.",
+      subtitle: "The first institutional OTC settlement protocol on Solana powered by encrypted balances and minimalist commitment anchors.",
+      cta: "Start Settlement Engine",
+      docs: "Read Docs"
+    },
+    features: {
+      f1: { title: "Zero-text Settlement", desc: "No SPL transfers. Uses Baby Jubjub ElGamal encryption to update 128B ciphertexts, guaranteed by Groth16 ZKs." },
+      f2: { title: "Symmetric Dual-Lock", desc: "Scheme B core: Both balances lock simultaneously upon accept, eliminating the 'free option' in atomic swaps." },
+      f3: { title: "Version Slot Concurrency", desc: "MM exclusive: Reserves VersionSlot PDAs to break ZK serialization, boosting throughput by over 3.5x." }
+    }
+  }
+};
+
+// ==========================================
+// 背景组件 1：首页紫黑色 3D 波动网格 (保持 Web3 美感)
+// ==========================================
+const SineWaveBackground = () => {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    let animationFrameId;
+    let time = 0;
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    window.addEventListener('resize', resize);
+    resize();
+
+    const cols = 100, rows = 45, spacing = 100, focalLength = 400;
+
+    const draw = () => {
+      ctx.fillStyle = '#08030c'; 
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const centerX = canvas.width / 2, centerY = canvas.height / 2.5; 
+      const points = [];
+
+      for (let z = 0; z < rows; z++) {
+        const rowPoints = [];
+        for (let x = 0; x < cols; x++) {
+          const worldX = (x - cols / 2) * spacing;
+          const worldZ = z * spacing;
+          const yOffset = Math.sin(worldX * 0.002 + time) * 80 + Math.cos(worldZ * 0.003 + time * 0.6) * 60 + Math.sin((worldX + worldZ) * 0.0015 - time * 0.4) * 40;
+          const worldY = yOffset + 180;
+          const scale = focalLength / (focalLength + worldZ);
+          rowPoints.push({ px: centerX + worldX * scale, py: centerY + worldY * scale, scale });
+        }
+        points.push(rowPoints);
+      }
+
+      ctx.lineWidth = 1; ctx.lineJoin = 'round';
+      for (let z = 0; z < rows - 1; z++) {
+        for (let x = 0; x < cols - 1; x++) {
+          const p00 = points[z][x], p10 = points[z+1][x], p01 = points[z][x+1], p11 = points[z+1][x+1];
+          const alpha = Math.max(0, p00.scale * 2.0 - 0.1) * Math.pow(Math.sin((x / cols) * Math.PI), 0.8) * Math.min(1, z / 6);
+          if (alpha <= 0.01) continue; 
+          ctx.strokeStyle = `rgba(110, 40, 160, ${alpha * 0.6})`;
+          ctx.beginPath(); ctx.moveTo(p00.px, p00.py); ctx.lineTo(p01.px, p01.py); ctx.lineTo(p10.px, p10.py); ctx.closePath(); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(p11.px, p11.py); ctx.lineTo(p10.px, p10.py); ctx.lineTo(p01.px, p01.py); ctx.closePath(); ctx.stroke();
+        }
+      }
+      time += 0.003; 
+      animationFrameId = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => { window.removeEventListener('resize', resize); cancelAnimationFrame(animationFrameId); };
+  }, []);
+  return <canvas ref={canvasRef} className="fixed inset-0 z-0 pointer-events-none animate-in fade-in duration-1000" />;
+};
+
+// ==========================================
+// 背景组件 2：生产终端绿色扫描雷达网格 (硬核极客风)
+// ==========================================
+const WireframeBackground = () => {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    let animationId;
+    let time = 0;
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    window.addEventListener('resize', resize);
+    resize();
+
+    const draw = () => {
+      ctx.fillStyle = '#020408';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.lineWidth = 1;
+      const gridSize = 60;
+      
+      ctx.strokeStyle = 'rgba(20, 241, 149, 0.03)';
+      ctx.beginPath();
+      for(let x=0; x<canvas.width; x+=gridSize) { ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); }
+      for(let y=0; y<canvas.height; y+=gridSize) { ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); }
+      ctx.stroke();
+
+      const scanlineY = (time * 2) % canvas.height;
+      const gradient = ctx.createLinearGradient(0, scanlineY - 100, 0, scanlineY);
+      gradient.addColorStop(0, 'rgba(20, 241, 149, 0)');
+      gradient.addColorStop(1, 'rgba(20, 241, 149, 0.1)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, scanlineY - 100, canvas.width, 100);
+      
+      ctx.strokeStyle = 'rgba(20, 241, 149, 0.3)';
+      ctx.beginPath(); ctx.moveTo(0, scanlineY); ctx.lineTo(canvas.width, scanlineY); ctx.stroke();
+
+      time += 1;
+      animationId = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => { window.removeEventListener('resize', resize); cancelAnimationFrame(animationId); };
+  }, []);
+  return <canvas ref={canvasRef} className="fixed inset-0 z-0 pointer-events-none animate-in fade-in duration-1000" />;
+};
+
+
+// ==========================================
+// 页面 1：首页 (HomeView)
+// ==========================================
+const HomeView = ({ onLaunch }) => {
+  const [lang, setLang] = useState('zh');
+  const t = translations[lang];
+  const toggleLang = () => setLang(lang === 'zh' ? 'en' : 'zh');
+
+  return (
+    <div className="relative z-10 flex flex-col min-h-screen text-slate-100 font-sans animate-in fade-in duration-700">
+      <header className="pt-6 px-4 md:px-8 flex justify-center">
+        <div className="flex items-center justify-between w-full max-w-6xl px-6 py-3 bg-white/5 backdrop-blur-md border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.3)] rounded-full">
+          <div className="flex items-center space-x-2">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-emerald-400 to-purple-500 flex items-center justify-center shadow-[0_0_15px_rgba(52,211,153,0.5)]">
+              <Code2 size={18} className="text-white" />
+            </div>
+            <span className="text-xl font-bold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-emerald-100 to-slate-300">
+              Nexum Protocol
+            </span>
+          </div>
+          <div className="flex items-center space-x-4">
+            <button onClick={toggleLang} className="flex items-center space-x-1 text-sm text-slate-300 hover:text-white transition-colors px-3 py-1.5 rounded-full hover:bg-white/10">
+              <Globe size={16} /><span>{lang === 'zh' ? 'EN' : '中文'}</span>
+            </button>
+            <button onClick={onLaunch} className="hidden sm:flex items-center space-x-2 bg-white/10 hover:bg-white/20 border border-white/20 backdrop-blur-lg px-5 py-2 rounded-full transition-all hover:scale-105 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]">
+              <span className="text-sm font-medium">{t.nav.app}</span><ArrowRight size={16} />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-grow flex flex-col items-center justify-center px-4 pt-20 pb-16 text-center max-w-5xl mx-auto">
+        <div className="inline-flex items-center space-x-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-medium mb-8 backdrop-blur-sm">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <span>{t.hero.badge}</span>
+        </div>
+        <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-8 leading-tight text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-400 drop-shadow-lg">
+          {t.hero.title.split('。').map((part, i) => (
+            <span key={i}>{part}{i !== t.hero.title.split('。').length - 1 ? '。' : ''}<br className="hidden md:block"/></span>
+          ))}
+        </h1>
+        <p className="text-lg md:text-xl text-slate-400 mb-12 max-w-3xl leading-relaxed">{t.hero.subtitle}</p>
+        <div className="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-6">
+          <button onClick={onLaunch} className="group relative px-8 py-4 bg-emerald-500/20 text-emerald-300 font-bold rounded-full overflow-hidden backdrop-blur-xl border border-emerald-500/50 shadow-[0_0_40px_rgba(16,185,129,0.3)] transition-all hover:scale-105 hover:bg-emerald-500/30 hover:shadow-[0_0_60px_rgba(16,185,129,0.5)]">
+            <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/20 to-transparent -skew-x-12 -translate-x-full group-hover:animate-[shine_1s_ease-in-out]" />
+            <div className="relative flex items-center space-x-2"><span>{t.hero.cta}</span><ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" /></div>
+          </button>
+          <button className="px-8 py-4 rounded-full text-slate-300 hover:text-white transition-colors border border-transparent hover:border-white/10 hover:bg-white/5 backdrop-blur-sm">
+            {t.hero.docs}
+          </button>
+        </div>
+      </main>
+
+      <section className="pb-24 px-4 max-w-7xl mx-auto w-full grid grid-cols-1 md:grid-cols-3 gap-6">
+        <FeatureCard icon={<EyeOff className="text-purple-400" size={32} />} title={t.features.f1.title} desc={t.features.f1.desc} />
+        <FeatureCard icon={<Link className="text-emerald-400" size={32} />} title={t.features.f2.title} desc={t.features.f2.desc} />
+        <FeatureCard icon={<Database className="text-blue-400" size={32} />} title={t.features.f3.title} desc={t.features.f3.desc} />
+      </section>
+    </div>
+  );
+};
+
+function FeatureCard({ icon, title, desc }) {
+  return (
+    <div className="group relative p-[1px] rounded-[2.5rem] overflow-hidden transition-transform duration-500 hover:-translate-y-2">
+      <div className="absolute inset-0 bg-gradient-to-br from-white/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+      <div className="relative h-full bg-white/5 backdrop-blur-2xl p-8 rounded-[2.5rem] border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.2)] flex flex-col items-start overflow-hidden">
+        <div className="absolute -top-12 -right-12 w-32 h-32 bg-white/5 rounded-full blur-2xl" />
+        <div className="mb-6 p-4 rounded-2xl bg-white/5 border border-white/10 shadow-inner">{icon}</div>
+        <h3 className="text-xl font-bold text-slate-100 mb-3">{title}</h3>
+        <p className="text-slate-400 leading-relaxed text-sm">{desc}</p>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// 页面 2：角色选择页 (专为方案 B 生产环境设计)
+// ==========================================
+const RoleSelectionView = ({ onSelectTrader, onSelectRegulator, onBack }) => {
+  return (
+    <div className="relative z-10 flex flex-col min-h-screen items-center justify-center animate-in fade-in zoom-in-95 duration-500 font-mono text-slate-300">
+      <button onClick={onBack} className="absolute top-8 left-8 flex items-center space-x-2 text-slate-500 hover:text-slate-300 transition-colors bg-[#05080C] px-4 py-2 rounded-sm border border-slate-800">
+        <ArrowLeft size={16} />
+        <span className="text-xs uppercase tracking-widest">Return to Home</span>
+      </button>
+
+      <div className="border border-slate-800 bg-[#05080C]/90 backdrop-blur-md p-10 md:p-12 max-w-4xl text-center rounded-sm shadow-[0_0_80px_rgba(20,241,149,0.05)] w-full">
+        <div className="flex justify-center mb-6">
+          <div className="w-16 h-16 border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-center text-emerald-400 rounded-sm">
+            <Activity size={32} />
+          </div>
+        </div>
+        
+        <div className="inline-block border border-emerald-900/50 bg-emerald-900/20 text-emerald-400 text-[10px] px-3 py-1 tracking-[0.2em] uppercase mb-8 rounded-sm">
+          Production Environment (Scheme B)
+        </div>
+        
+        <h1 className="text-4xl md:text-5xl font-black text-white tracking-tight mb-4 uppercase">
+          System Initialization
+        </h1>
+        
+        <div className="text-sm text-slate-400 mb-10 max-w-2xl mx-auto leading-relaxed">
+          Select your operational clearance to access the Nexum Network.
+        </div>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full max-w-2xl mx-auto">
+          {/* 机构交易员节点 */}
+          <button 
+            onClick={onSelectTrader} 
+            className="group w-full px-4 py-8 bg-emerald-500/10 border border-emerald-500/40 hover:bg-emerald-500/20 text-emerald-400 font-bold uppercase tracking-widest text-[12px] transition-all flex flex-col items-center justify-center rounded-sm shadow-[0_0_20px_rgba(16,185,129,0.05)] hover:shadow-[0_0_30px_rgba(16,185,129,0.15)]"
+          >
+            <User size={28} className="mb-4 group-hover:scale-110 transition-transform text-emerald-300" />
+            <span className="text-emerald-300 mb-1">Institutional Trader</span>
+            <span className="text-[10px] opacity-70 text-emerald-500 lowercase normal-case text-center mt-2">
+              OTC Execution Node <br/>(3-Step Dual-Lock)
+            </span>
+          </button>
+
+          {/* 监管审计节点 */}
+          <button 
+            onClick={onSelectRegulator} 
+            className="group w-full px-4 py-8 bg-purple-900/20 border border-purple-500/30 hover:bg-purple-900/40 text-purple-300 font-bold uppercase tracking-widest text-[12px] transition-all flex flex-col items-center justify-center rounded-sm"
+          >
+            <Shield size={28} className="mb-4 group-hover:scale-110 transition-transform" />
+            <span className="mb-1">Regulator Node</span>
+            <span className="text-[10px] opacity-60 text-slate-400 lowercase normal-case text-center mt-2">
+              Compliance Audit Gateway<br/>(TEE Decryption)
+            </span>
+          </button>
+        </div>
+      </div>
+      
+      <div className="absolute bottom-8 flex space-x-12 text-[10px] text-slate-600 uppercase tracking-widest font-bold">
+        <span className="flex items-center"><Hash size={12} className="mr-2 text-emerald-500/50"/> SHA-256 Commitments</span>
+        <span className="flex items-center"><Link size={12} className="mr-2 text-blue-500/50"/> Symmetric Dual-Lock</span>
+        <span className="flex items-center"><Cpu size={12} className="mr-2 text-purple-500/50"/> ZK Version Slots</span>
+      </div>
+    </div>
+  );
+};
+
+
+// ==========================================
+// 页面 3：交易员终端 (彻底重新设计的方案 B 界面)
+// ==========================================
+const TraderTerminal = ({ onBack }) => {
+  const [appState, setAppState] = useState('BOOTING'); 
+  // 核心状态流: BOOTING -> READY -> INITIATING -> WAITING_ACCEPT -> PROVING -> SUBMITTING -> SUCCESS
+  
+  const [bsgsProgress, setBsgsProgress] = useState(0);
+  const [proveProgress, setProveProgress] = useState(0);
+  
+  // 方案 B 专属业务状态
+  const [commitHash, setCommitHash] = useState(null);
+  const [lockStatus, setLockStatus] = useState('none'); // 'none' | 'partyA' | 'both'
+  const [versionSlots, setVersionSlots] = useState(0);
+
+  const [counterparty, setCounterparty] = useState('');
+  const [amount, setAmount] = useState('');
+  const [role, setRole] = useState('sender');
+  
+  const [logs, setLogs] = useState([]);
+  const logsEndRef = useRef(null);
+
+  const addLog = (msg, type = 'info') => {
+    setLogs(prev => [...prev, { time: new Date().toISOString().split('T')[1].slice(0,12), msg, type }]);
+  };
+
+  useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
+
+  // 环境预热
+  useEffect(() => {
+    if (appState !== 'BOOTING') return;
+    let p = 0;
+    addLog(`[SYSTEM] Booting Scheme B Production Environment...`, 'system');
+    addLog('[CryptoWorker] Building BSGS Lookup Table (4MB)...', 'warn');
+    const interval = setInterval(() => {
+      p += Math.floor(Math.random() * 20) + 10;
+      if (p >= 100) {
+        clearInterval(interval);
+        setBsgsProgress(100);
+        addLog('[CryptoWorker] ✓ BSGS Table Ready', 'success');
+        setTimeout(() => { addLog('[SYSTEM] Synchronizing encrypted ledgers from Solana...', 'system'); }, 400);
+        setTimeout(() => { addLog('[SYSTEM] Node Synchronized. Free Option Elimination Active.', 'success'); setAppState('READY'); }, 1200);
+      } else {
+        setBsgsProgress(p);
+      }
+    }, 150);
+    return () => clearInterval(interval);
+  }, [appState]);
+
+  // 执行方案 B 核心逻辑 (3-Step Dual-Lock)
+  const handleExecute = async () => {
+    if (!amount || !counterparty) return;
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    setLogs([]); 
+
+    // --- Step 1: Initiate (生成承诺哈希) ---
+    setAppState('INITIATING');
+    addLog(`[STEP 1] Generating 120-byte payload (amount, asset, expiry)...`, 'info');
+    await sleep(600);
+    const hash = generateHash(64);
+    setCommitHash(`0x${hash}`);
+    addLog(`[CryptoWorker] SHA-256 Commitment Hash computed: 0x${hash.slice(0,16)}...`, 'warn');
+    await sleep(800);
+    addLog(`[Network] Submitting initiate_commit TX to Solana...`, 'system');
+    await sleep(1000);
+    addLog(`[Network] ✓ CommitSlot PDA created (204 bytes).`, 'success');
+    setLockStatus('partyA'); // 甲方锁定
+
+    // --- Step 2: Accept (双向对称锁定) ---
+    setAppState('WAITING_ACCEPT');
+    addLog(`[STEP 2] Waiting for counterparty to validate hash and accept (60s timeout)...`, 'info');
+    await sleep(2500); // 模拟等待
+    addLog(`[Network] Counterparty invoked accept_commit!`, 'success');
+    addLog(`[SYSTEM] 🔐 SYMMETRIC DUAL-LOCK ENGAGED. Free option eliminated.`, 'warn');
+    setLockStatus('both'); // 双方锁定
+    await sleep(1000);
+
+    // --- Step 3: Prove & Execute (并发版本槽) ---
+    setAppState('PROVING');
+    addLog(`[STEP 3] Proving & Executing...`, 'info');
+    await sleep(400);
+    addLog(`[Network] Reserving VersionSlot PDAs for concurrent proving...`, 'system');
+    setVersionSlots(1); 
+    await sleep(600);
+    
+    addLog('[ProverWorker] Running Groth16 fullProve with BN254...', 'system');
+    for (let i = 1; i <= 10; i++) {
+      setProveProgress(i * 10);
+      if (i === 4) addLog(`[ProverWorker] Constraints: 12,778 evaluated.`, 'info');
+      await sleep(200);
+    }
+    addLog('[ProverWorker] ✓ ZK Proof Generated [256 bytes]', 'success');
+    await sleep(600);
+
+    setAppState('SUBMITTING');
+    addLog(`[NETWORK] Submitting execute_settle_b TX (ZK proofs + Hash Verification)...`, 'warn');
+    await sleep(1500);
+    addLog(`[NETWORK] ✓ Block Confirmed (Slot: 312847295)`, 'success');
+    
+    setAppState('SUCCESS');
+    setLockStatus('none'); // 结算完成，解除锁定
+    setVersionSlots(0);
+  };
+
+  // 取消逻辑模拟 (对应方案 B 的 cancel_initiate)
+  const handleCancel = () => {
+    setAppState('READY');
+    setCommitHash(null);
+    setLockStatus('none');
+    addLog(`[SYSTEM] cancel_initiate invoked. Ledger unlocked. Rent recovered.`, 'warn');
+  };
+
+  return (
+    <div className="relative z-10 flex flex-col min-h-screen p-4 md:p-8 font-mono text-slate-300 animate-in fade-in duration-500">
+      {/* 顶部状态栏 - 增加版本槽监控 */}
+      <header className="flex justify-between items-center border-b border-slate-800 pb-4 mb-6">
+        <div className="flex items-center space-x-4">
+          <button onClick={onBack} className="p-2 bg-slate-900 border border-slate-700 hover:bg-slate-800 rounded-sm text-slate-400 transition-colors">
+            <ArrowRightLeft size={16} />
+          </button>
+          <div>
+            <h1 className="text-xl font-bold text-white tracking-widest uppercase">OTC Settlement Node</h1>
+            <p className="text-[10px] text-emerald-500/70">Scheme B Production Environment</p>
+          </div>
+        </div>
+
+        <div className="flex space-x-4 bg-[#05080C] border border-slate-800 p-2 rounded-sm">
+          <div className="flex items-center px-3 border-r border-slate-800">
+            <Cpu size={14} className={`mr-2 ${versionSlots > 0 ? 'text-purple-400 animate-pulse' : 'text-slate-600'}`} />
+            <div className="flex flex-col">
+              <span className="text-[9px] uppercase text-slate-500">Version Slots</span>
+              <span className="text-xs text-white">{versionSlots > 0 ? `Reserved: ${versionSlots}/20` : 'Idle'}</span>
+            </div>
+          </div>
+          <div className="flex items-center px-3">
+            <Database size={14} className={`mr-2 ${appState === 'PROVING' ? 'text-blue-500 animate-pulse' : bsgsProgress===100?'text-emerald-500':'text-slate-600'}`} />
+            <div className="flex flex-col">
+              <span className="text-[9px] uppercase text-slate-500">ZK Prover</span>
+              <span className="text-xs text-white">{appState === 'PROVING' ? `Proving: ${proveProgress}%` : (bsgsProgress===100?'Standby':'Loading')}</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        {/* 左侧：操作与状态监控面板 */}
+        <div className="lg:col-span-5 flex flex-col gap-6">
+          
+          {/* 方案 B 专属：三步进度追踪器 */}
+          <div className="border border-slate-800 bg-[#05080C] p-4 rounded-sm flex justify-between items-center text-[10px] uppercase tracking-widest font-bold">
+            <div className={`flex flex-col items-center ${['INITIATING','WAITING_ACCEPT','PROVING','SUBMITTING','SUCCESS'].includes(appState) ? 'text-emerald-400' : 'text-slate-600'}`}>
+              <Hash size={16} className="mb-1" />
+              <span>1. Initiate</span>
+            </div>
+            <div className={`h-px flex-grow mx-4 ${['WAITING_ACCEPT','PROVING','SUBMITTING','SUCCESS'].includes(appState) ? 'bg-emerald-500/50' : 'bg-slate-800'}`} />
+            <div className={`flex flex-col items-center ${['WAITING_ACCEPT','PROVING','SUBMITTING','SUCCESS'].includes(appState) ? 'text-emerald-400' : 'text-slate-600'}`}>
+              <Link size={16} className="mb-1" />
+              <span>2. Dual-Lock</span>
+            </div>
+            <div className={`h-px flex-grow mx-4 ${['PROVING','SUBMITTING','SUCCESS'].includes(appState) ? 'bg-emerald-500/50' : 'bg-slate-800'}`} />
+            <div className={`flex flex-col items-center ${['PROVING','SUBMITTING','SUCCESS'].includes(appState) ? 'text-emerald-400' : 'text-slate-600'}`}>
+              <CheckSquare size={16} className="mb-1" />
+              <span>3. Execute</span>
+            </div>
+          </div>
+
+          {/* 表单输入区 */}
+          <div className="border border-slate-800 bg-[#05080C] rounded-sm flex flex-col relative overflow-hidden">
+            {appState === 'BOOTING' && (
+              <div className="absolute inset-0 z-20 bg-black/80 backdrop-blur-sm flex items-center justify-center">
+                <div className="text-emerald-500 flex flex-col items-center">
+                  <Loader2 size={24} className="animate-spin mb-2" />
+                  <span className="text-xs tracking-widest uppercase">System Waking...</span>
+                </div>
+              </div>
+            )}
+            
+            <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 flex justify-between items-center">
+              <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">Trade Intent</span>
+              <span className="text-[9px] text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 rounded-sm">Scheme B Encrypted</span>
+            </div>
+            
+            <div className="p-5 space-y-5">
+              <div>
+                <label className="text-[10px] text-slate-500 uppercase mb-2 block">Counterparty Address</label>
+                <div className="flex bg-[#0A0F16] border border-slate-700 focus-within:border-emerald-500/50 rounded-sm">
+                  <div className="px-3 bg-slate-800/50 flex items-center justify-center border-r border-slate-700"><Wallet size={12} className="text-slate-400" /></div>
+                  <input type="text" value={counterparty} onChange={e => setCounterparty(e.target.value)} disabled={appState !== 'READY'} className="bg-transparent w-full text-xs px-3 py-2 outline-none text-emerald-50 font-mono" placeholder="Solana Address..." />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-500 uppercase mb-2 block">Settlement Amount</label>
+                <div className="flex bg-[#0A0F16] border border-slate-700 focus-within:border-emerald-500/50 rounded-sm">
+                  <input type="number" value={amount} onChange={e => setAmount(e.target.value)} disabled={appState !== 'READY'} className="bg-transparent w-full text-base px-3 py-2 outline-none text-emerald-50 text-right font-mono" placeholder="0.00" />
+                  <div className="px-3 py-2 bg-slate-800/50 border-l border-slate-700 flex items-center text-[10px] font-bold text-slate-400">USDC</div>
+                </div>
+              </div>
+            </div>
+
+            {/* 动态操作按钮与取消按钮 */}
+            <div className="p-5 pt-0 flex space-x-3">
+              <button 
+                onClick={handleExecute}
+                disabled={appState !== 'READY' || !amount || !counterparty}
+                className={`flex-grow py-3 px-4 uppercase tracking-widest text-[10px] font-bold transition-all border rounded-sm flex items-center justify-center space-x-2
+                  ${appState === 'READY' && amount && counterparty ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50 hover:bg-emerald-500/30' : 'bg-slate-900 text-slate-600 border-slate-800 cursor-not-allowed'}`}
+              >
+                <Hash size={14} /> <span>{appState === 'READY' ? 'Step 1: Initiate Commit' : 'Processing...'}</span>
+              </button>
+
+              {/* 超时取消按钮 (演示用) */}
+              {(appState === 'WAITING_ACCEPT' || appState === 'INITIATING') && (
+                <button onClick={handleCancel} className="px-4 border border-red-900/50 bg-red-900/20 text-red-400 text-[10px] uppercase font-bold hover:bg-red-900/40 rounded-sm transition-colors">
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 方案 B 专属：Commitment & Lock 监控器 */}
+          <div className="border border-slate-800 bg-[#05080C] rounded-sm p-5 flex-grow flex flex-col relative overflow-hidden">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center border-b border-slate-800 pb-2">
+              <Lock size={14} className="mr-2" /> Commitment & Lock Status
+            </h3>
+            
+            <div className="space-y-4 text-[10px] flex-grow">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">CommitSlot Hash:</span>
+                <span className={`font-bold ${commitHash ? 'text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-sm border border-purple-500/20' : 'text-slate-600'}`}>
+                  {commitHash ? `${commitHash.slice(0,16)}...` : 'AWAITING_INIT'}
+                </span>
+              </div>
+              
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">Party A (You) Ledger:</span>
+                <span className={`font-bold px-2 py-0.5 rounded-sm border ${lockStatus === 'partyA' || lockStatus === 'both' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
+                  {lockStatus === 'partyA' || lockStatus === 'both' ? 'LOCKED (Pending)' : 'ACTIVE (Free)'}
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">Party B (CP) Ledger:</span>
+                <span className={`font-bold px-2 py-0.5 rounded-sm border ${lockStatus === 'both' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
+                  {lockStatus === 'both' ? 'LOCKED (Pending)' : 'ACTIVE (Free)'}
+                </span>
+              </div>
+            </div>
+
+            {lockStatus === 'both' && (
+              <div className="mt-4 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-sm text-emerald-400 text-[9px] uppercase tracking-wider text-center animate-pulse">
+                Symmetric Dual-Lock Engaged. Zero Free Option.
+              </div>
+            )}
+            {lockStatus === 'partyA' && (
+              <div className="mt-4 p-3 bg-orange-500/10 border border-orange-500/30 rounded-sm text-orange-400 text-[9px] uppercase tracking-wider text-center flex items-center justify-center">
+                <Clock size={10} className="mr-1 animate-spin" /> Awaiting Counterparty (60s)...
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 右侧：赛博朋克终端 */}
+        <div className="lg:col-span-7 flex flex-col gap-6">
+          <div className="border border-slate-800 bg-[#020305] flex flex-col h-full rounded-sm relative shadow-[0_0_30px_rgba(20,241,149,0.02)]">
+            
+            <div className="bg-[#0b140e] border-b border-[#1a2f23] px-4 py-2 flex justify-between items-center">
+              <span className="text-xs font-mono text-emerald-600/70 flex items-center">
+                <Terminal size={14} className="mr-2"/> nexum-crypto-engine — scheme-b
+              </span>
+              
+              <div className="flex items-center space-x-2 text-[10px] font-mono">
+                {appState === 'INITIATING' && <><span className="text-purple-500 animate-pulse">●</span> <span className="text-purple-400">Hashing Payload...</span></>}
+                {appState === 'WAITING_ACCEPT' && <><span className="text-orange-500 animate-pulse">●</span> <span className="text-orange-400">Awaiting Accept...</span></>}
+                {appState === 'PROVING' && <><span className="text-blue-500 animate-pulse">●</span> <span className="text-blue-400">ZK Prover Active</span></>}
+                {appState === 'SUBMITTING' && <><span className="text-yellow-500 animate-pulse">●</span> <span className="text-yellow-400">Submitting TX...</span></>}
+              </div>
+            </div>
+
+            <div className="flex-grow p-5 overflow-y-auto font-mono text-[11px] leading-relaxed custom-scrollbar relative">
+              <div className="space-y-1.5 pb-24">
+                {logs.map((log, i) => (
+                  <div key={i} className="flex space-x-3">
+                    <span className="text-slate-600 shrink-0">[{log.time}]</span>
+                    <span className={`
+                      ${log.type === 'system' ? 'text-slate-400' : ''}
+                      ${log.type === 'warn' ? 'text-yellow-400/80' : ''}
+                      ${log.type === 'info' ? 'text-blue-400/80' : ''}
+                      ${log.type === 'success' ? 'text-emerald-400 font-bold' : ''}
+                    `}>
+                      {log.msg}
+                    </span>
+                  </div>
+                ))}
+                {appState === 'PROVING' && (
+                  <div className="mt-2 text-emerald-500">
+                    {'█'.repeat(Math.floor(proveProgress / 4))}{'░'.repeat(25 - Math.floor(proveProgress / 4))} {proveProgress}%
+                  </div>
+                )}
+                <div ref={logsEndRef} />
+              </div>
+            </div>
+
+            {/* 执行成功金色高亮框 */}
+            <div className={`absolute bottom-0 left-0 right-0 bg-[#141002] border-t-2 border-yellow-500/60 transition-all duration-500 overflow-hidden shadow-[0_-10px_40px_rgba(234,179,8,0.1)]
+              ${appState === 'SUCCESS' ? 'h-[140px] opacity-100' : 'h-0 opacity-0'}
+            `}>
+              <div className="p-5 flex flex-col justify-between h-full">
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center space-x-2 text-yellow-500 mb-2">
+                    <CheckSquare size={16} />
+                    <span className="font-bold tracking-widest uppercase text-sm">
+                      Atomic Settlement Executed
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] text-yellow-600/70 uppercase tracking-widest mb-1">Compute Units Consumed</div>
+                    <div className="text-2xl text-yellow-400 font-black tracking-wider">
+                      ~250,158 <span className="text-xs font-normal text-yellow-600/50">/ 400,000</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="mt-auto flex justify-between items-end">
+                  <div>
+                    <div className="text-[9px] text-yellow-600/50 uppercase mb-1">CommitSlot Closed & Dual-Lock Released</div>
+                    <div className="text-[10px] text-yellow-500/80 bg-yellow-500/10 border border-yellow-500/20 p-2 rounded-sm truncate">
+                      Ledger Updated: 0x2b4f9c...d81a ⊕ 0x71fc3e...90b2
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
+
+// ==========================================
+// 页面 4：监管审计视角 (未变更)
+// ==========================================
+const RegulatorTerminal = ({ onBack }) => {
+  const [selectedRecord, setSelectedRecord] = useState(null);
+  const [decrypting, setDecrypting] = useState(false);
+  const [decryptedAmount, setDecryptedAmount] = useState(null);
+
+  const mockRecords = [
+    { id: 'SETL-8F2A...9C11', time: '2026-04-18 14:22', init: '7xKp...mNqR', cp: '2vBa...zL9o', asset: 'USDC/SOL' },
+    { id: 'SETL-3C9B...4D88', time: '2026-04-19 09:15', init: '5kMz...1aPq', cp: '9jRt...oX2w', asset: 'USDC/USDT' },
+    { id: 'SETL-1E77...B502', time: 'Just Now', init: 'Current User', cp: 'Counterparty', asset: 'USDC/SOL' },
+  ];
+
+  const handleAudit = async (record) => setSelectedRecord(record);
+  const confirmAudit = async () => { setDecrypting(true); await new Promise(r => setTimeout(r, 2000)); setDecryptedAmount("500,000.00"); setDecrypting(false); };
+
+  return (
+    <div className="relative z-10 flex flex-col min-h-screen p-4 md:p-8 font-mono text-slate-300 animate-in fade-in duration-500">
+      <header className="flex justify-between items-center border-b border-purple-900/50 pb-4 mb-6">
+        <div className="flex items-center space-x-4">
+          <button onClick={onBack} className="p-2 bg-slate-900 border border-slate-700 hover:bg-slate-800 rounded-sm text-slate-400">
+            <ArrowRightLeft size={16} />
+          </button>
+          <div>
+            <h1 className="text-xl font-bold text-white tracking-widest uppercase">Regulator Audit Node</h1>
+            <p className="text-[10px] text-purple-400/70">TEE Enclave Decryption Gateway</p>
+          </div>
+        </div>
+        <div className="flex items-center text-purple-400 border border-purple-500/30 bg-purple-500/10 px-3 py-1 rounded-sm text-xs">
+          <Shield size={14} className="mr-2" /> PCR Authorized
+        </div>
+      </header>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="border border-slate-800 bg-[#05080C] p-5 rounded-sm">
+          <h2 className="text-xs uppercase tracking-widest text-slate-500 mb-6">Settlement Records (Ciphertexts)</h2>
+          <div className="space-y-3">
+            {mockRecords.map(record => (
+              <div key={record.id} className="border border-slate-800 bg-slate-900/50 p-4 rounded-sm flex justify-between items-center hover:border-purple-500/30 transition-colors">
+                <div><div className="text-emerald-400 text-xs font-bold mb-1">{record.id}</div><div className="text-[10px] text-slate-500">{record.time} | {record.asset}</div></div>
+                <button onClick={() => handleAudit(record)} className="px-4 py-2 bg-purple-500/10 border border-purple-500/50 text-purple-400 text-[10px] uppercase font-bold hover:bg-purple-500/20 rounded-sm">Request Audit</button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="border border-slate-800 bg-[#05080C] rounded-sm flex flex-col justify-center items-center p-8 text-center relative overflow-hidden">
+          {!selectedRecord ? (
+            <div className="text-slate-600 flex flex-col items-center">
+              <Eye size={48} className="mb-4 opacity-20" />
+              <p className="text-xs uppercase tracking-widest">Select a record to initiate audit</p>
+            </div>
+          ) : !decryptedAmount && !decrypting ? (
+            <div className="space-y-6">
+              <AlertTriangle size={48} className="text-orange-500 mx-auto" />
+              <div><h3 className="text-lg font-bold text-white mb-2">Initiate Compliance Audit</h3><p className="text-xs text-slate-400">Target: {selectedRecord.id}</p></div>
+              <div className="bg-orange-500/10 border border-orange-500/30 p-4 text-[10px] text-orange-400 text-left"><strong>WARNING:</strong> This action is IRREVERSIBLE. A permanent `AuditLog` PDA will be created on Solana, visible to the target.</div>
+              <button onClick={confirmAudit} className="w-full py-3 bg-red-600 hover:bg-red-500 text-white font-bold text-xs uppercase tracking-widest rounded-sm transition-colors">Confirm & Decrypt via TEE</button>
+            </div>
+          ) : decrypting ? (
+            <div className="text-purple-400 flex flex-col items-center">
+              <Activity size={32} className="animate-spin mb-4" />
+              <div className="text-xs uppercase tracking-widest mb-2">AWS Nitro Enclave Decrypting...</div><div className="text-[10px] text-slate-500 font-mono">Fetching keys from KMS via PCR condition</div>
+            </div>
+          ) : (
+            <div className="space-y-6 w-full animate-in zoom-in duration-500">
+              <CheckSquare size={48} className="text-emerald-500 mx-auto" />
+              <div>
+                <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Decrypted Settlement Amount</div>
+                <div className="text-4xl font-black text-white bg-slate-900 border border-slate-700 py-6 rounded-sm">{decryptedAmount} <span className="text-sm text-slate-500 font-normal">USDC</span></div>
+              </div>
+              <div className="text-left bg-[#0A0F16] border border-slate-800 p-4 text-[10px] space-y-2 text-slate-400">
+                <div><span className="text-slate-500">Initiator:</span> {selectedRecord.init}</div>
+                <div><span className="text-slate-500">Counterparty:</span> {selectedRecord.cp}</div>
+                <div><span className="text-emerald-500">✓ On-chain Audit Log created successfully.</span></div>
+              </div>
+              <button onClick={() => {setDecryptedAmount(null); setSelectedRecord(null);}} className="text-xs text-slate-500 underline">Close</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+// ==========================================
+// 主应用逻辑：统筹所有视图
+// ==========================================
+export default function App() {
+  const [view, setView] = useState('home'); 
+
+  return (
+    <div className={`relative min-h-screen text-slate-100 selection:bg-emerald-500/30 overflow-hidden transition-colors duration-1000 ${view === 'home' ? 'bg-[#08030c]' : 'bg-[#020408]'}`}>
+      
+      {view === 'home' ? <SineWaveBackground /> : <WireframeBackground />}
+      {view === 'home' && <HomeView onLaunch={() => setView('roles')} />}
+      {view === 'roles' && <RoleSelectionView onSelectTrader={() => setView('trader')} onSelectRegulator={() => setView('regulator')} onBack={() => setView('home')} />}
+      {view === 'trader' && <TraderTerminal onBack={() => setView('roles')} />}
+      {view === 'regulator' && <RegulatorTerminal onBack={() => setView('roles')} />}
+
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes shine { 100% { transform: translateX(250%); } }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1E293B; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #334155; }
+      `}} />
+    </div>
+  );
+}
