@@ -57,6 +57,7 @@ export interface SchemeBState {
   logs: string[];
   counterpartyState: CounterpartyState;
   hashValid: boolean | null;
+  lastTxHash: string;
   initiate: (counterparty: string, assetBMint: string, amount: bigint, assetAMint?: string) => Promise<void>;
   verifyAndAccept: (amount: bigint) => Promise<void>;
   cancelInitiate: () => Promise<void>;
@@ -78,6 +79,7 @@ export function useSchemeB(
   const [logs, setLogs] = useState<string[]>([]);
   const [hashValid, setHashValid] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastTxHash, setLastTxHash] = useState("");
 
   // Store params for execute/cancel steps
   const pendingParams = useRef<{
@@ -150,11 +152,20 @@ export function useSchemeB(
           const ledgerInfo = await program.account.userLedger.fetch(ledgerA);
           const status = (ledgerInfo as any).status as any;
           if (status?.pendingInitiator !== undefined) {
-            log("Ledger confirmed locked (PendingInitiator) — initiate succeeded.");
             // Read pending_nonce from raw on-chain data (offset 730 in UserLedger account)
             const ledgerAccountInfo = await program.provider.connection.getAccountInfo(ledgerA);
             const rawNonce = ledgerAccountInfo!.data.readBigUInt64LE(730);
             const [csPda] = findCommitSlotPDA(ledgerA, rawNonce, program.programId);
+
+            // Fetch TX hash from CommitSlot's on-chain signature history
+            let txHash = "pending";
+            try {
+              const sigs = await program.provider.connection.getSignaturesForAddress(csPda, { limit: 1 });
+              if (sigs && sigs.length > 0) txHash = sigs[0].signature;
+            } catch { /* ignore */ }
+
+            log(`✓ Initiate committed — TX: ${txHash}`);
+            setLastTxHash(txHash);
             setCommitSlotId(csPda.toBase58());
             pendingParams.current = {
               ledgerA,
@@ -187,7 +198,15 @@ export function useSchemeB(
                   clearInterval(pollInterval);
                   clearInterval(countdownRef.current);
                   setInitiatorState("BOTH_LOCKED");
-                  log("Counterparty accepted! Both ledgers locked (BothLocked).");
+                  // Fetch accept TX from CommitSlot signature history
+                  try {
+                    const sigs = await program.provider.connection.getSignaturesForAddress(csPda, { limit: 1 });
+                    const acceptTx = sigs && sigs.length > 0 ? sigs[0].signature : "";
+                    log(`✓ Dual-lock confirmed — Accept TX: ${acceptTx}`);
+                    if (acceptTx) setLastTxHash(acceptTx);
+                  } catch {
+                    log("✓ Dual-lock confirmed — both ledgers secured.");
+                  }
                 }
               } catch { /* retry */ }
             }, 3000);
@@ -199,7 +218,8 @@ export function useSchemeB(
       }
 
       const hexHash = Array.from(result.commitment_hash).map(b => b.toString(16).padStart(2, "0")).join("");
-      log(`Commitment hash: ${hexHash.slice(0, 16)}...`);
+      log(`✓ Initiate committed — TX: ${result.tx_signature}`);
+      setLastTxHash(result.tx_signature);
       setCommitmentHash(hexHash);
 
       setCommitSlotId(result.commit_slot_id.toBase58());
@@ -345,6 +365,7 @@ export function useSchemeB(
     logs,
     counterpartyState,
     hashValid,
+    lastTxHash,
     initiate,
     verifyAndAccept,
     cancelInitiate: cancelInitiateAction,
