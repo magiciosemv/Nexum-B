@@ -6,6 +6,7 @@ import { I18nProvider, useI18n } from "./context/I18nProvider";
 import { SineWaveBackground, WireframeBackground } from "./components/backgrounds";
 import SettleBPage from "./pages/settle-b";
 import MakerDashboard from "./pages/maker-dashboard";
+import RegulatorPage from "./pages/regulator";
 import {
   Code2, Globe, ArrowRight, EyeOff, Link, Database, User,
   Shield, ArrowLeft, Activity, Hash, Cpu, Wallet,
@@ -248,23 +249,11 @@ function AppInner() {
     );
   }
 
-  // Regulator placeholder
+  // Regulator view
   return (
     <div className="relative min-h-screen bg-[#0F172A]">
       <WireframeBackground />
-      <div className="relative z-10 flex flex-col min-h-screen items-center justify-center animate-fade-in font-mono text-slate-300">
-        <div className="border border-slate-700/50 bg-slate-900/90 backdrop-blur-lg p-10 max-w-md text-center rounded-xl">
-          <Shield size={44} className="text-purple-400 mx-auto mb-4" />
-          <h2 className="text-xl font-display font-bold text-white tracking-tight uppercase mb-3">{t.regulator.title}</h2>
-          <p className="text-sm text-slate-400 mb-6">{t.regulator.subtitle}</p>
-          <button
-            onClick={() => setView("roles")}
-            className="px-6 py-2 bg-slate-800 border border-slate-700 text-slate-300 text-xs uppercase tracking-widest rounded-lg hover:bg-slate-700 transition-colors cursor-pointer"
-          >
-            {t.regulator.back}
-          </button>
-        </div>
-      </div>
+      <RegulatorPage onBack={() => setView("roles")} />
     </div>
   );
 }

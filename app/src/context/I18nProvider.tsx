@@ -108,6 +108,82 @@ interface Translations {
     title: string;
     subtitle: string;
     back: string;
+    overview: string;
+    totalSettlements: string;
+    activeCommitSlots: string;
+    protocolStatus: string;
+    configTitle: string;
+    configAuthority: string;
+    configPaused: string;
+    configInitWindow: string;
+    configExecWindow: string;
+    configTolerance: string;
+    configMaxSlots: string;
+    settlementExplorer: string;
+    partyA: string;
+    partyB: string;
+    assetA: string;
+    assetB: string;
+    amount: string;
+    settledAt: string;
+    scheme: string;
+    versionA: string;
+    versionB: string;
+    explorerPlaceholder: string;
+    explorerHint: string;
+    loadBtn: string;
+    loading: string;
+    noRecords: string;
+    commitmentInspector: string;
+    commitSlotAddress: string;
+    loadCommitBtn: string;
+    initiator: string;
+    counterparty: string;
+    commitmentHash: string;
+    expiryInit: string;
+    executeExpiry: string;
+    bothLockedAt: string;
+    nonce: string;
+    status: string;
+    statusWaitingAccept: string;
+    statusBothLocked: string;
+    statusSettled: string;
+    statusCancelled: string;
+    proofDataTitle: string;
+    proofAParty: string;
+    proofBParty: string;
+    proofSize: string;
+    ctSize: string;
+    verifyProof: string;
+    verifyResult: string;
+    verifyValid: string;
+    verifyInvalid: string;
+    ledgerInspector: string;
+    ledgerAddress: string;
+    loadLedgerBtn: string;
+    owner: string;
+    mint: string;
+    version: string;
+    ledgerStatus: string;
+    lastSettlement: string;
+    balanceCtLo: string;
+    balanceCtHi: string;
+    auditCtLo: string;
+    auditCtHi: string;
+    pendingCommitment: string;
+    pendingExpiry: string;
+    pendingCounterparty: string;
+    pendingNonce: string;
+    ledgerActive: string;
+    ledgerPendingInit: string;
+    ledgerBothPending: string;
+    ledgerPendingCp: string;
+    ledgerEmergency: string;
+    recentSettlements: string;
+    txHash: string;
+    blockTime: string;
+    fetchError: string;
+    refresh: string;
   };
 }
 
@@ -201,9 +277,85 @@ const zh: Translations = {
     backBtn: "返回角色选择",
   },
   regulator: {
-    title: "监管网关",
-    subtitle: "TEE 安全飞地解密功能尚未在本版本中实现。",
+    title: "监管审计网关",
+    subtitle: "链上数据透明度 — 所有结算记录、承诺哈希和 ZK 证明均可审计。",
     back: "返回角色选择",
+    overview: "协议概览",
+    totalSettlements: "总结算数",
+    activeCommitSlots: "活跃 CommitSlot",
+    protocolStatus: "协议状态",
+    configTitle: "协议配置",
+    configAuthority: "治理权限",
+    configPaused: "暂停状态",
+    configInitWindow: "发起窗口",
+    configExecWindow: "执行窗口",
+    configTolerance: "时钟容忍",
+    configMaxSlots: "最大版本槽",
+    settlementExplorer: "结算记录浏览器",
+    partyA: "甲方 (发起方)",
+    partyB: "乙方 (对手方)",
+    assetA: "资产 A",
+    assetB: "资产 B",
+    amount: "转账金额",
+    settledAt: "结算时间",
+    scheme: "结算方案",
+    versionA: "甲方版本",
+    versionB: "乙方版本",
+    explorerPlaceholder: "输入 SettlementRecord 地址...",
+    explorerHint: "输入 PDA 地址查看单条结算记录",
+    loadBtn: "加载记录",
+    loading: "加载中…",
+    noRecords: "暂无结算记录。请输入地址或等待最新数据。",
+    commitmentInspector: "CommitSlot 检查器",
+    commitSlotAddress: "CommitSlot 地址",
+    loadCommitBtn: "加载 CommitSlot",
+    initiator: "发起方",
+    counterparty: "对手方",
+    commitmentHash: "承诺哈希",
+    expiryInit: "发起过期",
+    executeExpiry: "执行过期",
+    bothLockedAt: "双锁时间",
+    nonce: "Nonce",
+    status: "状态",
+    statusWaitingAccept: "等待接受",
+    statusBothLocked: "双方已锁",
+    statusSettled: "已结算",
+    statusCancelled: "已取消",
+    proofDataTitle: "ProofData 验证",
+    proofAParty: "甲方证明",
+    proofBParty: "乙方证明",
+    proofSize: "证明大小",
+    ctSize: "密文大小",
+    verifyProof: "验证 ZK 证明",
+    verifyResult: "验证结果",
+    verifyValid: "证明格式有效（256字节 Groth16）",
+    verifyInvalid: "证明无效",
+    ledgerInspector: "UserLedger 检查器",
+    ledgerAddress: "Ledger 地址",
+    loadLedgerBtn: "加载 Ledger",
+    owner: "所有者",
+    mint: "铸币地址",
+    version: "版本号",
+    ledgerStatus: "状态",
+    lastSettlement: "最近结算 ID",
+    balanceCtLo: "余额密文 (低)",
+    balanceCtHi: "余额密文 (高)",
+    auditCtLo: "审计密文 (低)",
+    auditCtHi: "审计密文 (高)",
+    pendingCommitment: "待处理承诺",
+    pendingExpiry: "待处理过期",
+    pendingCounterparty: "待处理对手方",
+    pendingNonce: "待处理 Nonce",
+    ledgerActive: "活跃",
+    ledgerPendingInit: "发起方待确认",
+    ledgerBothPending: "双方待确认",
+    ledgerPendingCp: "对手方待确认",
+    ledgerEmergency: "紧急",
+    recentSettlements: "最近结算事件",
+    txHash: "交易哈希",
+    blockTime: "区块时间",
+    fetchError: "获取数据失败",
+    refresh: "刷新数据",
   },
 };
 
@@ -297,9 +449,85 @@ const en: Translations = {
     backBtn: "Back to Roles",
   },
   regulator: {
-    title: "Regulator Gateway",
-    subtitle: "TEE Enclave Decryption is not yet available in this release.",
+    title: "Regulatory Audit Gateway",
+    subtitle: "On-chain data transparency — all settlement records, commitment hashes, and ZK proofs are auditable.",
     back: "Back to Roles",
+    overview: "Protocol Overview",
+    totalSettlements: "Total Settlements",
+    activeCommitSlots: "Active CommitSlots",
+    protocolStatus: "Protocol Status",
+    configTitle: "Protocol Config",
+    configAuthority: "Authority",
+    configPaused: "Paused",
+    configInitWindow: "Init Window",
+    configExecWindow: "Execute Window",
+    configTolerance: "Clock Tolerance",
+    configMaxSlots: "Max Version Slots",
+    settlementExplorer: "Settlement Record Explorer",
+    partyA: "Party A (Initiator)",
+    partyB: "Party B (Counterparty)",
+    assetA: "Asset A",
+    assetB: "Asset B",
+    amount: "Transfer Amount",
+    settledAt: "Settled At",
+    scheme: "Scheme",
+    versionA: "Version A",
+    versionB: "Version B",
+    explorerPlaceholder: "Enter SettlementRecord address...",
+    explorerHint: "Enter a PDA address to view a single settlement record",
+    loadBtn: "Load Record",
+    loading: "Loading...",
+    noRecords: "No settlement records found. Enter an address or wait for recent data.",
+    commitmentInspector: "CommitSlot Inspector",
+    commitSlotAddress: "CommitSlot Address",
+    loadCommitBtn: "Load CommitSlot",
+    initiator: "Initiator",
+    counterparty: "Counterparty",
+    commitmentHash: "Commitment Hash",
+    expiryInit: "Init Expiry",
+    executeExpiry: "Execute Expiry",
+    bothLockedAt: "Both Locked At",
+    nonce: "Nonce",
+    status: "Status",
+    statusWaitingAccept: "Waiting Accept",
+    statusBothLocked: "Both Locked",
+    statusSettled: "Settled",
+    statusCancelled: "Cancelled",
+    proofDataTitle: "ProofData Verification",
+    proofAParty: "Party A Proof",
+    proofBParty: "Party B Proof",
+    proofSize: "Proof Size",
+    ctSize: "Ciphertext Size",
+    verifyProof: "Verify ZK Proof",
+    verifyResult: "Verification Result",
+    verifyValid: "Proof format valid (256-byte Groth16)",
+    verifyInvalid: "Proof invalid",
+    ledgerInspector: "UserLedger Inspector",
+    ledgerAddress: "Ledger Address",
+    loadLedgerBtn: "Load Ledger",
+    owner: "Owner",
+    mint: "Mint",
+    version: "Version",
+    ledgerStatus: "Status",
+    lastSettlement: "Last Settlement ID",
+    balanceCtLo: "Balance CT (Lo)",
+    balanceCtHi: "Balance CT (Hi)",
+    auditCtLo: "Audit CT (Lo)",
+    auditCtHi: "Audit CT (Hi)",
+    pendingCommitment: "Pending Commitment",
+    pendingExpiry: "Pending Expiry",
+    pendingCounterparty: "Pending Counterparty",
+    pendingNonce: "Pending Nonce",
+    ledgerActive: "Active",
+    ledgerPendingInit: "PendingInitiator",
+    ledgerBothPending: "BothPending",
+    ledgerPendingCp: "PendingCounterparty",
+    ledgerEmergency: "Emergency",
+    recentSettlements: "Recent Settlement Events",
+    txHash: "TX Hash",
+    blockTime: "Block Time",
+    fetchError: "Failed to fetch data",
+    refresh: "Refresh Data",
   },
 };
 
