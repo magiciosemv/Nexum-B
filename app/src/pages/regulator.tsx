@@ -30,10 +30,10 @@ interface SettlementRecord {
   assetBMint: string;
   transferLo: number;
   transferHi: number;
-  versionA: bigint;
-  versionB: bigint;
-  scheme: number;
-  settledAt: bigint;
+  versionA: number;
+  versionB: number;
+  scheme: any;
+  settledAt: number;
 }
 
 interface CommitSlotData {
@@ -42,11 +42,11 @@ interface CommitSlotData {
   assetAMint: string;
   assetBMint: string;
   commitmentHash: number[];
-  expiryInit: bigint;
-  executeExpiry: bigint;
-  nonce: bigint;
-  bothLockedAt: bigint;
-  status: number;
+  expiryInit: number;
+  executeExpiry: number;
+  nonce: number;
+  bothLockedAt: number;
+  status: any; // Anchor enum object
   bump: number;
 }
 
@@ -57,15 +57,15 @@ interface LedgerData {
   balanceCtHi: number[];
   auditCtLo: number[];
   auditCtHi: number[];
-  version: bigint;
-  status: number;
+  version: number;
+  status: any; // Anchor enum object like {active: {}}
   lastSettlementId: number[];
   bump: number;
   pendingCommitment: number[];
-  pendingExpiry: bigint;
+  pendingExpiry: number;
   pendingCounterparty: string;
   pendingAssetBMint: string;
-  pendingNonce: bigint;
+  pendingNonce: number;
 }
 
 interface ConfigData {
@@ -96,16 +96,54 @@ function formatTime(ts: bigint | number | null): string {
   return new Date(Number(ts) * 1000).toLocaleString();
 }
 
-function statusName(idx: number, labels: string[]): string {
-  return labels[idx] || `Unknown(${idx})`;
+/** Anchor returns enums as objects like {active: {}} — extract the variant name */
+function anchorEnumToIndex(e: any): number {
+  if (typeof e === "number") return e;
+  if (typeof e === "object" && e !== null) {
+    const key = Object.keys(e)[0];
+    if (key === undefined) return -1;
+    // Capitalize first letter for matching
+    return LEDGER_STATUS_KEYS.indexOf(key);
+  }
+  return -1;
 }
 
-function slotStatusName(idx: number, labels: string[]): string {
-  return labels[idx] || `Unknown(${idx})`;
+function slotEnumToIndex(e: any): number {
+  if (typeof e === "number") return e;
+  if (typeof e === "object" && e !== null) {
+    const key = Object.keys(e)[0];
+    if (key === undefined) return -1;
+    return SLOT_STATUS_KEYS.indexOf(key);
+  }
+  return -1;
 }
 
-function schemeName(idx: number): string {
-  return idx === 0 ? "Scheme A" : idx === 1 ? "Scheme B" : `Unknown(${idx})`;
+function schemeEnumToIndex(e: any): number {
+  if (typeof e === "number") return e;
+  if (typeof e === "object" && e !== null) {
+    const key = Object.keys(e)[0];
+    if (key === "schemeA") return 0;
+    if (key === "schemeB") return 1;
+  }
+  return -1;
+}
+
+const LEDGER_STATUS_KEYS = ["active", "pendingInitiator", "bothPending", "pendingCounterparty", "emergency"];
+const SLOT_STATUS_KEYS = ["waitingAccept", "bothLocked", "settled", "cancelled"];
+
+function statusName(e: any, labels: string[]): string {
+  const idx = anchorEnumToIndex(e);
+  return labels[idx] || `Unknown(${typeof e === "object" ? JSON.stringify(e) : e})`;
+}
+
+function slotStatusName(e: any, labels: string[]): string {
+  const idx = slotEnumToIndex(e);
+  return labels[idx] || `Unknown(${typeof e === "object" ? JSON.stringify(e) : e})`;
+}
+
+function schemeName(e: any): string {
+  const idx = schemeEnumToIndex(e);
+  return idx === 0 ? "Scheme A" : idx === 1 ? "Scheme B" : `Unknown(${typeof e === "object" ? JSON.stringify(e) : e})`;
 }
 
 function hashBytesToHex(bytes: number[] | Uint8Array, maxLen = 16): string {
@@ -270,10 +308,10 @@ export default function RegulatorPage({ onBack }: Props) {
         assetBMint: info.assetBMint.toBase58(),
         transferLo: info.transferLo,
         transferHi: info.transferHi,
-        versionA: info.versionA,
-        versionB: info.versionB,
+        versionA: info.versionA.toNumber ? info.versionA.toNumber() : Number(info.versionA),
+        versionB: info.versionB.toNumber ? info.versionB.toNumber() : Number(info.versionB),
         scheme: info.scheme,
-        settledAt: info.settledAt,
+        settledAt: info.settledAt.toNumber ? info.settledAt.toNumber() : Number(info.settledAt),
       });
     } catch (e: any) {
       setError(`${t.regulator.fetchError}: ${e.message?.slice(0, 100)}`);
@@ -297,10 +335,10 @@ export default function RegulatorPage({ onBack }: Props) {
         assetAMint: info.assetAMint.toBase58(),
         assetBMint: info.assetBMint.toBase58(),
         commitmentHash: Array.from(info.commitmentHash),
-        expiryInit: info.expiryInit,
-        executeExpiry: info.executeExpiry,
-        nonce: info.nonce,
-        bothLockedAt: info.bothLockedAt,
+        expiryInit: info.expiryInit.toNumber ? info.expiryInit.toNumber() : Number(info.expiryInit),
+        executeExpiry: info.executeExpiry.toNumber ? info.executeExpiry.toNumber() : Number(info.executeExpiry),
+        nonce: info.nonce.toNumber ? info.nonce.toNumber() : Number(info.nonce),
+        bothLockedAt: info.bothLockedAt.toNumber ? info.bothLockedAt.toNumber() : Number(info.bothLockedAt),
         status: info.status,
         bump: info.bump,
       });
@@ -345,15 +383,15 @@ export default function RegulatorPage({ onBack }: Props) {
         balanceCtHi: Array.from(info.balanceCtHi),
         auditCtLo: Array.from(info.auditCtLo),
         auditCtHi: Array.from(info.auditCtHi),
-        version: info.version,
+        version: info.version.toNumber ? info.version.toNumber() : Number(info.version),
         status: info.status,
         lastSettlementId: Array.from(info.lastSettlementId),
         bump: info.bump,
         pendingCommitment: Array.from(info.pendingCommitment),
-        pendingExpiry: info.pendingExpiry,
+        pendingExpiry: info.pendingExpiry.toNumber ? info.pendingExpiry.toNumber() : Number(info.pendingExpiry),
         pendingCounterparty: info.pendingCounterparty.toBase58(),
         pendingAssetBMint: info.pendingAssetBMint.toBase58(),
-        pendingNonce: info.pendingNonce,
+        pendingNonce: info.pendingNonce.toNumber ? info.pendingNonce.toNumber() : Number(info.pendingNonce),
       });
     } catch (e: any) {
       setError(`${t.regulator.fetchError}: ${e.message?.slice(0, 100)}`);
@@ -506,7 +544,7 @@ export default function RegulatorPage({ onBack }: Props) {
               <DataRow label={t.regulator.commitmentHash} value={hashBytesToHex(commitSlot.commitmentHash, 20)} mono copyable />
               <DataRow label={t.regulator.status} value="" />
               <div className="py-1">
-                <StatusBadge color={commitSlot.status === 0 ? "amber" : commitSlot.status === 1 ? "blue" : commitSlot.status === 2 ? "green" : "red"}>
+                <StatusBadge color={slotEnumToIndex(commitSlot.status) === 0 ? "amber" : slotEnumToIndex(commitSlot.status) === 1 ? "blue" : slotEnumToIndex(commitSlot.status) === 2 ? "green" : "red"}>
                   {slotStatusName(commitSlot.status, [t.regulator.statusWaitingAccept, t.regulator.statusBothLocked, t.regulator.statusSettled, t.regulator.statusCancelled])}
                 </StatusBadge>
               </div>
@@ -565,10 +603,10 @@ export default function RegulatorPage({ onBack }: Props) {
               <div className="py-1.5 border-b border-slate-700/20 flex justify-between items-center">
                 <span className="text-xs text-slate-500">{t.regulator.ledgerStatus}</span>
                 <StatusBadge color={
-                  ledger.status === 0 ? "green" :
-                  ledger.status === 1 ? "amber" :
-                  ledger.status === 2 ? "blue" :
-                  ledger.status === 3 ? "purple" : "red"
+                  anchorEnumToIndex(ledger.status) === 0 ? "green" :
+                  anchorEnumToIndex(ledger.status) === 1 ? "amber" :
+                  anchorEnumToIndex(ledger.status) === 2 ? "blue" :
+                  anchorEnumToIndex(ledger.status) === 3 ? "purple" : "red"
                 }>
                   {statusName(ledger.status, [t.regulator.ledgerActive, t.regulator.ledgerPendingInit, t.regulator.ledgerBothPending, t.regulator.ledgerPendingCp, t.regulator.ledgerEmergency])}
                 </StatusBadge>
