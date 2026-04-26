@@ -44,3 +44,6 @@ export { cancelInitiate, cancelMutual } from "./scheme_b/cancel";
 export { VersionSlotManager } from "./scheme_b/version_slots";
 export type { SlotInfo } from "./scheme_b/version_slots";
 export { CommitSlotListener } from "./listeners/commit_listener";
+
+export { ProverManager, createCircuitInputs, serializeProof } from "./workers/prover";
+export type { CircuitInputs, Groth16Proof, ProverConfig } from "./workers/prover";

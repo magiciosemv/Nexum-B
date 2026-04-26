@@ -1,9 +1,8 @@
 /**
  * settle-b.tsx — Nexum OTC Settlement Terminal
  *
- * Orbitron display headers, JetBrains Mono data,
- * gold/amber accent, deep navy base. Full i18n via useI18n().
- * Event banners with TX hash + Solscan links.
+ * Full 3-step flow with ZK proof visualization.
+ * Orbitron headers, JetBrains Mono data, amber accent, deep navy base.
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -14,7 +13,7 @@ import type { InitiatorState } from "../hooks/useSchemeB";
 import {
   ArrowRightLeft, Terminal, Loader2, Lock, Hash,
   CheckSquare, Link, Clock, Wallet, Database,
-  ExternalLink, ShieldCheck, AlertCircle,
+  ExternalLink, ShieldCheck, AlertCircle, Zap, FileCode,
 } from "lucide-react";
 
 const SOLSCAN_BASE = "https://solscan.io/tx";
@@ -64,6 +63,7 @@ export default function SettleBPage({ onBack }: Props) {
   const step = STEP_MAP[schemeB.initiatorState] ?? 0;
   const lock = getLock(schemeB.initiatorState);
   const formOff = schemeB.initiatorState !== "IDLE";
+  const isExecuting = schemeB.initiatorState === "GENERATING_PROOF" || schemeB.initiatorState === "SUBMITTING_EXECUTE";
 
   return (
     <div className="relative z-10 flex flex-col min-h-screen p-4 md:p-8 font-mono text-slate-300 animate-fade-in">
@@ -89,7 +89,7 @@ export default function SettleBPage({ onBack }: Props) {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
         {/* Left */}
         <div className="lg:col-span-5 flex flex-col gap-5">
-          {/* 3-step */}
+          {/* 3-step progress */}
           <div className="border border-slate-700/40 bg-slate-800/30 p-4 rounded-xl flex justify-between items-center text-xs uppercase tracking-widest font-bold">
             {[
               { n: 1, label: t.trader.step1, Icon: Hash },
@@ -108,7 +108,7 @@ export default function SettleBPage({ onBack }: Props) {
 
           {/* Form */}
           <div className="border border-slate-700/40 bg-slate-800/30 rounded-xl flex flex-col relative overflow-hidden">
-            {schemeB.initiatorState === "IDLE" ? null : (
+            {formOff && (
               <div className="absolute inset-0 z-20 bg-black/50 backdrop-blur-sm flex items-center justify-center">
                 <Loader2 size={20} className="animate-spin text-amber-400" />
               </div>
@@ -187,10 +187,21 @@ export default function SettleBPage({ onBack }: Props) {
                 </div>
               )}
             </div>
-            {lock === "both" && (
-              <div className="mt-3 p-3 bg-emerald-400/10 border border-emerald-400/30 rounded-lg text-emerald-400 text-xs uppercase tracking-wider text-center font-bold animate-pulse flex items-center justify-center gap-2">
-                <ShieldCheck size={14} /> {t.trader.dualLockMsg}
-              </div>
+            {lock === "both" && !isExecuting && schemeB.initiatorState !== "SETTLED" && (
+              <button
+                onClick={() => schemeB.executeSettlement()}
+                className="mt-3 w-full py-3 bg-amber-400/15 border border-amber-400/40 hover:bg-amber-400/25 text-amber-400 text-xs uppercase font-bold tracking-widest rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Zap size={14} /> Execute ZK Settlement
+              </button>
+            )}
+            {lock === "both" && !isExecuting && schemeB.initiatorState !== "SETTLED" && (
+              <button
+                onClick={() => schemeB.cancelMutual()}
+                className="mt-2 w-full py-2 border border-red-400/20 bg-red-400/5 text-red-400/60 text-[10px] uppercase font-bold hover:bg-red-400/10 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel Mutual
+              </button>
             )}
             {lock === "partyA" && (
               <div className="mt-3 p-3 bg-orange-400/10 border border-orange-400/25 rounded-lg text-orange-400 text-xs uppercase tracking-wider text-center flex items-center justify-center gap-2">
@@ -213,14 +224,14 @@ export default function SettleBPage({ onBack }: Props) {
                 {schemeB.initiatorState === "SUBMITTING_INITIATE" && <span className="text-blue-400 animate-pulse">● Submitting...</span>}
                 {schemeB.initiatorState === "WAITING_ACCEPT" && <span className="text-orange-400 animate-pulse">● Awaiting...</span>}
                 {schemeB.initiatorState === "BOTH_LOCKED" && <span className="text-emerald-400">● Dual-Locked</span>}
-                {schemeB.initiatorState === "GENERATING_PROOF" && <span className="text-blue-400 animate-pulse">● Proving...</span>}
+                {schemeB.initiatorState === "GENERATING_PROOF" && <span className="text-blue-400 animate-pulse">● ZK Proving...</span>}
                 {schemeB.initiatorState === "SUBMITTING_EXECUTE" && <span className="text-yellow-400 animate-pulse">● Executing...</span>}
                 {schemeB.initiatorState === "SETTLED" && <span className="text-emerald-400">● Settled</span>}
               </div>
             </div>
 
             {/* Event banners */}
-            {(lock === "partyA" || lock === "both") && (
+            {(lock === "partyA" || lock === "both" || schemeB.initiatorState === "SETTLED") && (
               <div className="px-4 py-2 space-y-2 border-b border-slate-700/30">
                 {lock === "partyA" && (
                   <div className="flex items-center gap-2 p-2.5 bg-amber-400/8 border border-amber-400/20 rounded-lg">
@@ -231,14 +242,43 @@ export default function SettleBPage({ onBack }: Props) {
                     </div>
                   </div>
                 )}
-                {lock === "both" && (
+                {lock === "both" && !isExecuting && schemeB.initiatorState !== "SETTLED" && (
                   <div className="flex items-center gap-2 p-2.5 bg-emerald-400/8 border border-emerald-400/20 rounded-lg">
                     <ShieldCheck size={14} className="text-emerald-400 shrink-0" />
                     <div className="flex-grow min-w-0">
                       <span className="text-emerald-400 text-xs font-bold uppercase tracking-wide">Dual Lock Confirmed</span>
-                      <p className="text-emerald-500/60 text-[11px]">Both ledgers secured — ready for ZK proof execution</p>
+                      <p className="text-emerald-500/60 text-[11px]">Both ledgers secured — click "Execute ZK Settlement" to proceed</p>
                       {schemeB.lastTxHash && <TxLink hash={schemeB.lastTxHash} label="Accept TX" />}
                     </div>
+                  </div>
+                )}
+                {isExecuting && (
+                  <div className="flex items-center gap-2 p-2.5 bg-blue-400/8 border border-blue-400/20 rounded-lg">
+                    <FileCode size={14} className="text-blue-400 shrink-0 animate-pulse" />
+                    <div className="flex-grow min-w-0">
+                      <span className="text-blue-400 text-xs font-bold uppercase tracking-wide">
+                        {schemeB.initiatorState === "GENERATING_PROOF" ? "ZK Proof Generation" : "On-chain Execution"}
+                      </span>
+                      <p className="text-blue-500/60 text-[11px]">
+                        {schemeB.initiatorState === "GENERATING_PROOF"
+                          ? "Generating Groth16 proofs + ElGamal encryption in browser..."
+                          : "Submitting proofs to Solana devnet (6 transactions)..."
+                        }
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {schemeB.initiatorState === "SETTLED" && schemeB.settlementTxs && (
+                  <div className="p-2.5 bg-emerald-400/8 border border-emerald-400/20 rounded-lg space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck size={14} className="text-emerald-400 shrink-0" />
+                      <span className="text-emerald-400 text-xs font-bold uppercase tracking-wide">Settlement Complete</span>
+                    </div>
+                    <TxLink hash={schemeB.settlementTxs.txCreateProof} label="CreateProof" />
+                    {schemeB.settlementTxs.txsWriteProof.map((sig, i) => (
+                      <TxLink key={i} hash={sig} label={`Chunk ${i}`} />
+                    ))}
+                    <TxLink hash={schemeB.settlementTxs.txExecute} label="Execute" />
                   </div>
                 )}
               </div>
@@ -252,11 +292,12 @@ export default function SettleBPage({ onBack }: Props) {
                     <div key={i} className="flex space-x-3">
                       <span className="text-slate-700 shrink-0 text-[11px] w-20">[{new Date().toLocaleTimeString().slice(0, 8)}]</span>
                       <span className={
-                        log.includes("✓") || log.includes("Dual-lock") ? "text-emerald-400 font-bold" :
+                        log.includes("✓") ? "text-emerald-400 font-bold" :
                         log.includes("Error") || log.includes("MISMATCH") ? "text-red-400 font-bold" :
-                        log.includes("Hash") || log.includes("Submitting") ? "text-yellow-400/80" :
-                        log.includes("Computing") || log.includes("Generating") ? "text-blue-400/80" :
-                        log.includes("TX:") ? "text-cyan-400/80" : "text-slate-400"
+                        log.includes("Hash") || log.includes("Submitting") || log.includes("Creating") || log.includes("Writing") || log.includes("Executing") ? "text-yellow-400/80" :
+                        log.includes("Computing") || log.includes("Generating") || log.includes("Initializing") || log.includes("Encrypting") ? "text-blue-400/80" :
+                        log.includes("TX:") ? "text-cyan-400/80" :
+                        log.includes("Settlement complete") ? "text-amber-400 font-bold" : "text-slate-400"
                       }>{log}</span>
                     </div>
                   ))}
@@ -271,7 +312,12 @@ export default function SettleBPage({ onBack }: Props) {
                   <CheckSquare size={16} />
                   <span className="font-display font-bold tracking-widest uppercase text-sm">{t.trader.successTitle}</span>
                 </div>
-                <div className="text-[10px] text-amber-600/50 uppercase">{t.trader.successDetail}</div>
+                <div className="text-[10px] text-amber-600/50 uppercase">
+                  {schemeB.settlementTxs
+                    ? `Execute TX: ${schemeB.settlementTxs.txExecute.slice(0, 32)}...`
+                    : t.trader.successDetail
+                  }
+                </div>
               </div>
             </div>
           </div>

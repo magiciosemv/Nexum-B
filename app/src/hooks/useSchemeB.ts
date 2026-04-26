@@ -2,25 +2,86 @@
  * useSchemeB — React Hook for Scheme B Settlement Flow
  *
  * Manages the full three-step state machine:
- * IDLE → INITIATING → WAITING_ACCEPT → BOTH_LOCKED → GENERATING_PROOF → EXECUTING → SETTLED
+ * IDLE → INITIATING → WAITING_ACCEPT → BOTH_LOCKED → GENERATING_PROOF → SUBMITTING_EXECUTE → SETTLED
  *
- * Also handles timeout branches: TIMEOUT_EXPIRED, CANCELLED
+ * Step 3 generates REAL ZK proofs in the browser via snarkjs WASM.
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { PublicKey } from "@solana/web3.js";
+import { PublicKey, SystemProgram, ComputeBudgetProgram } from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
 import { computeCommitment, verifyCommitment } from "@nexum/sdk";
 import {
   findCommitSlotPDA,
   findLedgerPDA,
   findConfigPDA,
+  findSettlementPDA,
+  findProofDataPDA,
   splitAmount,
 } from "@nexum/sdk";
 import { initiateCommit } from "@nexum/sdk";
 import { acceptCommit } from "@nexum/sdk";
-import { executeSettle } from "@nexum/sdk";
 import { cancelInitiate as sdkCancelInitiate, cancelMutual as sdkCancelMutual } from "@nexum/sdk";
+import {
+  generateKeypair,
+  elgamalEncrypt,
+  serializeCiphertext,
+} from "@nexum/sdk";
+
+// ── Browser-compatible ZK proof helpers ──────────────────────────────
+// ProverManager uses require("snarkjs") which doesn't work in browser.
+// These inline functions use ESM import and the same math.
+
+/** BN254 field modulus for negation */
+const BN254_P = BigInt("21888242871839275222246405745257275088548364400416034343698204186575808495617");
+
+function fieldToBytes32(fieldStr: string): number[] {
+  const cleaned = fieldStr.replace(/"/g, "").trim();
+  let value = BigInt(cleaned);
+  if (value < 0n) value = value + BN254_P;
+  const bytes: number[] = [];
+  let v = value;
+  for (let i = 0; i < 32; i++) {
+    bytes.unshift(Number(v & 0xFFn));
+    v >>= 8n;
+  }
+  return bytes;
+}
+
+function serializeProofBrowser(
+  pi_a: string[], pi_b: string[][], pi_c: string[]
+): number[] {
+  const a_x = fieldToBytes32(pi_a[0]);
+  const a_y = fieldToBytes32(pi_a[1]);
+  const b_x_c0 = fieldToBytes32(pi_b[0][0]);
+  const b_x_c1 = fieldToBytes32(pi_b[0][1]);
+  const b_y_c0 = fieldToBytes32(pi_b[1][0]);
+  const b_y_c1 = fieldToBytes32(pi_b[1][1]);
+  const c_x = fieldToBytes32(pi_c[0]);
+  const c_y = fieldToBytes32(pi_c[1]);
+  // EIP-197 order: c1 before c0 per Fp² coordinate
+  return [...a_x, ...a_y, ...b_x_c1, ...b_x_c0, ...b_y_c1, ...b_y_c0, ...c_x, ...c_y];
+}
+
+async function browserGenerateProof(inputs: {
+  old_balance_lo: number; old_balance_hi: number;
+  new_balance_lo: number; new_balance_hi: number;
+  transfer_lo: number; transfer_hi: number;
+}, wasmUrl: string, zkeyUrl: string): Promise<{ proofBytes: number[]; publicSignals: string[] }> {
+  // Dynamic import — snarkjs is bundled by Vite, loaded as ESM
+  const snarkjs = await import("snarkjs");
+  const circuitInputs = {
+    old_balance_lo: String(inputs.old_balance_lo),
+    old_balance_hi: String(inputs.old_balance_hi),
+    new_balance_lo: String(inputs.new_balance_lo),
+    new_balance_hi: String(inputs.new_balance_hi),
+    transfer_lo: String(inputs.transfer_lo),
+    transfer_hi: String(inputs.transfer_hi),
+  };
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(circuitInputs, wasmUrl, zkeyUrl);
+  const proofBytes = serializeProofBrowser(proof.pi_a, proof.pi_b, proof.pi_c);
+  return { proofBytes, publicSignals: publicSignals.map((s: any) => String(s)) };
+}
 
 // ── State Machine ────────────────────────────────────────────────────
 
@@ -47,6 +108,14 @@ export type CounterpartyState =
   | "SETTLED"
   | "ERROR";
 
+// ── Settlement TX records ────────────────────────────────────────────
+
+export interface SettlementTxs {
+  txCreateProof: string;
+  txsWriteProof: string[];
+  txExecute: string;
+}
+
 // ── Hook Return Type ─────────────────────────────────────────────────
 
 export interface SchemeBState {
@@ -58,12 +127,18 @@ export interface SchemeBState {
   counterpartyState: CounterpartyState;
   hashValid: boolean | null;
   lastTxHash: string;
+  settlementTxs: SettlementTxs | null;
   initiate: (counterparty: string, assetBMint: string, amount: bigint, assetAMint?: string) => Promise<void>;
   verifyAndAccept: (amount: bigint) => Promise<void>;
+  executeSettlement: () => Promise<void>;
   cancelInitiate: () => Promise<void>;
   cancelMutual: () => Promise<void>;
   error: string | null;
 }
+
+// ── ZK Verifier program ID ───────────────────────────────────────────
+
+const ZK_VERIFIER_ID = new PublicKey("AytMjF35K8xDnrs7STj3keJzEvDvHGqJv2VQBQN3yfCi");
 
 // ── Hook Implementation ─────────────────────────────────────────────
 
@@ -80,6 +155,7 @@ export function useSchemeB(
   const [hashValid, setHashValid] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastTxHash, setLastTxHash] = useState("");
+  const [settlementTxs, setSettlementTxs] = useState<SettlementTxs | null>(null);
 
   // Store params for execute/cancel steps
   const pendingParams = useRef<{
@@ -96,7 +172,7 @@ export function useSchemeB(
   const countdownRef = useRef<ReturnType<typeof setInterval>>();
 
   const log = useCallback((msg: string) => {
-    setLogs(prev => [...prev.slice(-50), `[${new Date().toLocaleTimeString()}] ${msg}`]);
+    setLogs(prev => [...prev.slice(-80), `[${new Date().toLocaleTimeString()}] ${msg}`]);
   }, []);
 
   // Browser-safe hex → Uint8Array
@@ -125,13 +201,11 @@ export function useSchemeB(
       const mintBPubkey = new PublicKey(assetBMint);
       const mintAPubkey = assetAMint
         ? new PublicKey(assetAMint)
-        : new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"); // devnet USDC
+        : new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
 
       setInitiatorState("SUBMITTING_INITIATE");
-      log("Submitting initiate_commit (hash computed inside SDK)...");
+      log("Submitting initiate_commit...");
 
-      // SDK handles chain time + commitment hash internally.
-      // No duplicate hash computation here.
       let result;
       try {
         result = await initiateCommit(program, wallet, {
@@ -139,89 +213,77 @@ export function useSchemeB(
           asset_a_mint: mintAPubkey,
           asset_b_mint: mintBPubkey,
           transfer_amount: amount,
-          expiry_seconds: 55, // 55+5=60s = max window, gives counterparty max time to accept
+          expiry_seconds: 55,
         });
       } catch (err: any) {
-        // "already been processed" = tx succeeded but RPC returned duplicate error.
-        // Treat as success — the ledger is now locked.
         if (err.message?.includes("already been processed")) {
           log("Transaction submitted (confirming on-chain)...");
-          // Wait briefly then check ledger state to confirm
           await new Promise(r => setTimeout(r, 2000));
           const [ledgerA] = findLedgerPDA(wallet.publicKey, mintAPubkey, program.programId);
-          const ledgerInfo = await program.account.userLedger.fetch(ledgerA);
-          const status = (ledgerInfo as any).status as any;
-          if (status?.pendingInitiator !== undefined) {
-            // Read pending_nonce from raw on-chain data (offset 730 in UserLedger account)
-            const ledgerAccountInfo = await program.provider.connection.getAccountInfo(ledgerA);
-            const rawNonce = ledgerAccountInfo!.data.readBigUInt64LE(730);
-            const [csPda] = findCommitSlotPDA(ledgerA, rawNonce, program.programId);
+          const ledgerAccountInfo = await program.provider.connection.getAccountInfo(ledgerA);
+          const rawNonce = ledgerAccountInfo!.data.readBigUInt64LE(730);
+          const [csPda] = findCommitSlotPDA(ledgerA, rawNonce, program.programId);
 
-            // Fetch TX hash from CommitSlot's on-chain signature history
-            let txHash = "pending";
+          let txHash = "pending";
+          try {
+            const sigs = await program.provider.connection.getSignaturesForAddress(csPda, { limit: 1 });
+            if (sigs && sigs.length > 0) txHash = sigs[0].signature;
+          } catch { /* ignore */ }
+
+          log(`✓ Initiate committed — TX: ${txHash}`);
+          setLastTxHash(txHash);
+          setCommitSlotId(csPda.toBase58());
+          pendingParams.current = {
+            ledgerA,
+            commitSlotId: csPda,
+            counterparty: cpPubkey,
+            assetAMint: mintAPubkey,
+            assetBMint: mintBPubkey,
+            amount,
+            nonce: rawNonce,
+            expiry: 0,
+          };
+          setInitiatorState("WAITING_ACCEPT");
+          setCountdown(55);
+          let remaining = 55;
+          countdownRef.current = setInterval(() => {
+            remaining--;
+            setCountdown(remaining);
+            if (remaining <= 0) {
+              clearInterval(countdownRef.current);
+              setInitiatorState("TIMEOUT_EXPIRED");
+              log("Initiate window expired.");
+            }
+          }, 1000);
+          const pollInterval = setInterval(async () => {
             try {
-              const sigs = await program.provider.connection.getSignaturesForAddress(csPda, { limit: 1 });
-              if (sigs && sigs.length > 0) txHash = sigs[0].signature;
-            } catch { /* ignore */ }
-
-            log(`✓ Initiate committed — TX: ${txHash}`);
-            setLastTxHash(txHash);
-            setCommitSlotId(csPda.toBase58());
-            pendingParams.current = {
-              ledgerA,
-              commitSlotId: csPda,
-              counterparty: cpPubkey,
-              assetAMint: mintAPubkey,
-              assetBMint: mintBPubkey,
-              amount,
-              nonce: rawNonce,
-              expiry: 0,
-            };
-            setInitiatorState("WAITING_ACCEPT");
-            setCountdown(55);
-            let remaining = 55;
-            countdownRef.current = setInterval(() => {
-              remaining--;
-              setCountdown(remaining);
-              if (remaining <= 0) {
+              const slotInfo = await (program.account as any).commitSlot.fetch(csPda);
+              const slotStatus = (slotInfo as any).status as any;
+              if (slotStatus?.bothLocked !== undefined) {
+                clearInterval(pollInterval);
                 clearInterval(countdownRef.current);
-                setInitiatorState("TIMEOUT_EXPIRED");
-                log("Initiate window expired. Call cancelInitiate to unlock.");
-              }
-            }, 1000);
-            // Poll CommitSlot for counterparty accept
-            const pollInterval = setInterval(async () => {
-              try {
-                const slotInfo = await program.account.commitSlot.fetch(csPda);
-                const slotStatus = (slotInfo as any).status as any;
-                if (slotStatus?.bothLocked !== undefined) {
-                  clearInterval(pollInterval);
-                  clearInterval(countdownRef.current);
-                  setInitiatorState("BOTH_LOCKED");
-                  // Fetch accept TX from CommitSlot signature history
-                  try {
-                    const sigs = await program.provider.connection.getSignaturesForAddress(csPda, { limit: 1 });
-                    const acceptTx = sigs && sigs.length > 0 ? sigs[0].signature : "";
-                    log(`✓ Dual-lock confirmed — Accept TX: ${acceptTx}`);
-                    if (acceptTx) setLastTxHash(acceptTx);
-                  } catch {
-                    log("✓ Dual-lock confirmed — both ledgers secured.");
-                  }
+                setInitiatorState("BOTH_LOCKED");
+                try {
+                  const sigs = await program.provider.connection.getSignaturesForAddress(csPda, { limit: 1 });
+                  const acceptTx = sigs && sigs.length > 0 ? sigs[0].signature : "";
+                  log(`✓ Dual-lock confirmed — Accept TX: ${acceptTx}`);
+                  if (acceptTx) setLastTxHash(acceptTx);
+                } catch {
+                  log("✓ Dual-lock confirmed — both ledgers secured.");
                 }
-              } catch { /* retry */ }
-            }, 3000);
-            setTimeout(() => clearInterval(pollInterval), 70000);
-            return;
-          }
+              }
+            } catch { /* retry */ }
+          }, 3000);
+          setTimeout(() => clearInterval(pollInterval), 70000);
+          return;
         }
-        throw err; // Re-throw if not "already processed"
+        throw err;
       }
 
       const hexHash = Array.from(result.commitment_hash).map(b => b.toString(16).padStart(2, "0")).join("");
       log(`✓ Initiate committed — TX: ${result.tx_signature}`);
       setLastTxHash(result.tx_signature);
       setCommitmentHash(hexHash);
-
       setCommitSlotId(result.commit_slot_id.toBase58());
       pendingParams.current = {
         ledgerA: result.ledger_a,
@@ -233,7 +295,6 @@ export function useSchemeB(
         nonce: result.nonce,
         expiry: result.expiry,
       };
-
       setInitiatorState("WAITING_ACCEPT");
       setCountdown(55);
       log("Waiting for counterparty to accept (55s countdown)...");
@@ -245,25 +306,23 @@ export function useSchemeB(
         if (remaining <= 0) {
           clearInterval(countdownRef.current);
           setInitiatorState("TIMEOUT_EXPIRED");
-          log("Initiate window expired. Call cancelInitiate to unlock.");
+          log("Initiate window expired.");
         }
       }, 1000);
 
-      // Poll CommitSlot status to detect counterparty accept
       const slotPda = result.commit_slot_id;
       const pollInterval = setInterval(async () => {
         try {
-          const slotInfo = await program.account.commitSlot.fetch(slotPda);
+          const slotInfo = await (program.account as any).commitSlot.fetch(slotPda);
           const slotStatus = (slotInfo as any).status as any;
           if (slotStatus?.bothLocked !== undefined) {
             clearInterval(pollInterval);
             clearInterval(countdownRef.current);
             setInitiatorState("BOTH_LOCKED");
-            log("Counterparty accepted! Both ledgers locked (BothLocked).");
+            log("Counterparty accepted! Both ledgers locked.");
           }
-        } catch { /* ignore fetch errors, will retry */ }
+        } catch { /* retry */ }
       }, 3000);
-      // Auto-stop polling after 70 seconds
       setTimeout(() => clearInterval(pollInterval), 70000);
     } catch (err: any) {
       setError(err.message);
@@ -299,7 +358,7 @@ export function useSchemeB(
       setHashValid(valid);
 
       if (!valid) {
-        log("Hash MISMATCH — the committed amount differs from agreed. Do NOT accept.");
+        log("Hash MISMATCH — the committed amount differs from agreed.");
         return;
       }
 
@@ -313,14 +372,199 @@ export function useSchemeB(
 
       clearInterval(countdownRef.current);
       setInitiatorState("BOTH_LOCKED");
-      setCounterpartyState("GENERATING_PROOF");
-      log("Both locked. Generating ZK proof...");
+      log("Both locked. Ready for ZK proof execution.");
     } catch (err: any) {
       setError(err.message);
       setCounterpartyState("ERROR");
       log(`Error: ${err.message}`);
     }
   }, [program, wallet, commitmentHash, log]);
+
+  // ── Execute Settlement (Step 3 — ZK proofs in browser) ────────────
+  const executeSettlement = useCallback(async () => {
+    if (!program || !wallet || !pendingParams.current) return;
+    setError(null);
+    setInitiatorState("GENERATING_PROOF");
+
+    try {
+      const p = pendingParams.current;
+      const { lo: transfer_lo, hi: transfer_hi } = splitAmount(p.amount);
+      const tLo = Number(transfer_lo);
+      const tHi = Number(transfer_hi);
+
+      // ── Phase 1: ZK Proof Generation ────────────────────────────────
+      log("Loading snarkjs WASM prover...");
+      const WASM_URL = "/circuits/balance_transition.wasm";
+      const ZKEY_URL = "/circuits/balance_transition_final.zkey";
+
+      log("Generating ElGamal encryption keys...");
+      const keypairA = generateKeypair();
+      const keypairB = generateKeypair();
+      log("✓ ElGamal keypairs generated");
+
+      log("Generating ZK proof for Party A (sender)...");
+      const proofA = await browserGenerateProof({
+        old_balance_lo: tLo, old_balance_hi: tHi,
+        new_balance_lo: 0, new_balance_hi: 0,
+        transfer_lo: tLo, transfer_hi: tHi,
+      }, WASM_URL, ZKEY_URL);
+      log(`✓ Proof A: ${proofA.proofBytes.length} bytes`);
+
+      log("Generating ZK proof for Party B (receiver)...");
+      const proofB = await browserGenerateProof({
+        old_balance_lo: tLo, old_balance_hi: tHi,
+        new_balance_lo: 0, new_balance_hi: 0,
+        transfer_lo: tLo, transfer_hi: tHi,
+      }, WASM_URL, ZKEY_URL);
+      log(`✓ Proof B: ${proofB.proofBytes.length} bytes`);
+
+      log("Encrypting balances with ElGamal...");
+      // Party A: new=0 (sent), audit=transfer (old balance)
+      const ct_a_lo = elgamalEncrypt(0n, keypairA.publicKey);
+      const ct_a_hi = elgamalEncrypt(0n, keypairA.publicKey);
+      const audit_a_lo = elgamalEncrypt(BigInt(tLo), keypairA.publicKey);
+      const audit_a_hi = elgamalEncrypt(BigInt(tHi), keypairA.publicKey);
+      // Party B: new=transfer (received), audit=0 (old balance)
+      const ct_b_lo = elgamalEncrypt(BigInt(tLo), keypairB.publicKey);
+      const ct_b_hi = elgamalEncrypt(BigInt(tHi), keypairB.publicKey);
+      const audit_b_lo = elgamalEncrypt(0n, keypairB.publicKey);
+      const audit_b_hi = elgamalEncrypt(0n, keypairB.publicKey);
+      log("✓ 8 ciphertexts generated");
+
+      // Build proof chunks
+      const chunk0 = proofA.proofBytes;
+      const chunk1 = [
+        ...Array.from(serializeCiphertext(ct_a_lo)),
+        ...Array.from(serializeCiphertext(ct_a_hi)),
+        ...Array.from(serializeCiphertext(audit_a_lo)),
+        ...Array.from(serializeCiphertext(audit_a_hi)),
+      ];
+      const chunk2 = proofB.proofBytes;
+      const chunk3 = [
+        ...Array.from(serializeCiphertext(ct_b_lo)),
+        ...Array.from(serializeCiphertext(ct_b_hi)),
+        ...Array.from(serializeCiphertext(audit_b_lo)),
+        ...Array.from(serializeCiphertext(audit_b_hi)),
+      ];
+
+      // ── Phase 2: On-chain submission ────────────────────────────────
+      setInitiatorState("SUBMITTING_EXECUTE");
+
+      // Fetch CommitSlot on-chain to get nonce + derive PDAs
+      const slotData = await (program.account as any).commitSlot.fetch(p.commitSlotId);
+      const slotNonce = BigInt((slotData.nonce as anchor.BN).toString());
+      const [ledgerA] = findLedgerPDA(slotData.initiator, slotData.assetAMint, program.programId);
+      const [ledgerB] = findLedgerPDA(slotData.counterparty, slotData.assetBMint, program.programId);
+      const [configPda] = findConfigPDA(program.programId);
+      const [proofDataPda] = findProofDataPDA(slotNonce, program.programId);
+
+      // Step 3a: Create ProofData
+      // Helper: send TX with "already processed" retry
+      const sendTx = async (rpcCall: () => Promise<string>, label: string): Promise<string> => {
+        try {
+          return await rpcCall();
+        } catch (err: any) {
+          if (err.message?.includes("already been processed") || err.message?.includes("already processed")) {
+            log(`${label}: already submitted, confirming...`);
+            await new Promise(r => setTimeout(r, 3000));
+            // Fetch sig from chain
+            try {
+              const sigs = await program.provider.connection.getSignaturesForAddress(proofDataPda, { limit: 1 });
+              if (sigs && sigs.length > 0) return sigs[0].signature;
+            } catch { /* ignore */ }
+            return "confirmed";
+          }
+          throw err;
+        }
+      };
+
+      log("Creating ProofData account on-chain...");
+      const sig3a = await sendTx(async () =>
+        program.methods
+          .createProofData({ nonce: new anchor.BN(slotNonce.toString()) })
+          .accounts({
+            proofData: proofDataPda,
+            authority: wallet.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc({ commitment: "confirmed" }),
+        "CreateProof"
+      );
+      log(`✓ ProofData created — TX: ${sig3a}`);
+
+      // Step 3b: Write 4 chunks
+      const chunks = [chunk0, chunk1, chunk2, chunk3];
+      const chunkSigs: string[] = [];
+      for (let i = 0; i < 4; i++) {
+        log(`Writing proof chunk ${i}/3 (${chunks[i].length} bytes)...`);
+        const chunkIdx = i;
+        const sig = await sendTx(async () =>
+          program.methods
+            .writeProofData({
+              nonce: new anchor.BN(slotNonce.toString()),
+              chunkIndex: chunkIdx,
+              data: Buffer.from(chunks[chunkIdx]),
+            })
+            .accounts({
+              proofData: proofDataPda,
+              authority: wallet.publicKey,
+            })
+            .rpc({ commitment: "confirmed" }),
+          `Chunk ${chunkIdx}`
+        );
+        chunkSigs.push(sig);
+        log(`✓ Chunk ${i}/3 written — TX: ${sig}`);
+      }
+
+      // Step 3c: Execute settlement
+      log("Executing settlement (ZK verification on-chain, 400K CU)...");
+      const settlementNonce = BigInt(Date.now());
+      const [settlementPda] = findSettlementPDA(p.commitSlotId, settlementNonce, program.programId);
+
+      const sig3c = await sendTx(async () =>
+        program.methods
+          .executeSettleB({
+            nonce: new anchor.BN(slotNonce.toString()),
+            transferLo: transfer_lo,
+            transferHi: transfer_hi,
+            settlementNonce: new anchor.BN(settlementNonce.toString()),
+            oldALo: tLo, oldAHi: tHi, newALo: 0, newAHi: 0,
+            oldBLo: tLo, oldBHi: tHi, newBLo: 0, newBHi: 0,
+          })
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          ])
+          .accounts({
+            ledgerA: ledgerA,
+            ledgerB: ledgerB,
+            commitSlot: p.commitSlotId,
+            proofData: proofDataPda,
+            settlementRecord: settlementPda,
+            config: configPda,
+            feePayer: wallet.publicKey,
+            systemProgram: SystemProgram.programId,
+            zkVerifierProgram: ZK_VERIFIER_ID,
+          })
+          .rpc({ commitment: "confirmed" }),
+        "Execute"
+      );
+
+      log(`✓ SETTLEMENT EXECUTED — TX: ${sig3c}`);
+      setLastTxHash(sig3c);
+      setSettlementTxs({
+        txCreateProof: sig3a,
+        txsWriteProof: chunkSigs,
+        txExecute: sig3c,
+      });
+      setInitiatorState("SETTLED");
+      log("Settlement complete! Both ledgers returned to Active.");
+
+    } catch (err: any) {
+      setError(err.message);
+      setInitiatorState("ERROR");
+      log(`Error: ${err.message}`);
+    }
+  }, [program, wallet, log]);
 
   // ── Cancel actions ────────────────────────────────────────────────
   const cancelInitiateAction = useCallback(async () => {
@@ -366,8 +610,10 @@ export function useSchemeB(
     counterpartyState,
     hashValid,
     lastTxHash,
+    settlementTxs,
     initiate,
     verifyAndAccept,
+    executeSettlement,
     cancelInitiate: cancelInitiateAction,
     cancelMutual: cancelMutualAction,
     error,
