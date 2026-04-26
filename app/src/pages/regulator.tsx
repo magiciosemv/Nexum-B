@@ -360,7 +360,12 @@ export default function RegulatorPage({ onBack }: Props) {
         setProofData(null);
       }
     } catch (e: any) {
-      setError(`${t.regulator.fetchError}: ${e.message?.slice(0, 100)}`);
+      const msg = e.message || "";
+      if (msg.includes("discriminator") || msg.includes("Account does not exist")) {
+        setError("Account not found — CommitSlot is closed after settlement/cancel. This is by design (rent reclaimed). Check SettlementRecord instead for historical data.");
+      } else {
+        setError(`${t.regulator.fetchError}: ${msg.slice(0, 100)}`);
+      }
       setCommitSlot(null);
       setProofData(null);
     } finally {
