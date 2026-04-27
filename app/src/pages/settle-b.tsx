@@ -6,6 +6,7 @@
  */
 
 import React, { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useSchemeB } from "../hooks/useSchemeB";
 import { useAnchorContext } from "../context/WalletProvider";
 import { useI18n } from "../context/I18nProvider";
@@ -13,7 +14,7 @@ import type { InitiatorState } from "../hooks/useSchemeB";
 import {
   ArrowRightLeft, Terminal, Loader2, Lock, Hash,
   CheckSquare, Link, Clock, Wallet, Database,
-  ExternalLink, ShieldCheck, AlertCircle, Zap, FileCode,
+  ExternalLink, ShieldCheck, AlertCircle, Zap, FileCode, Cpu,
 } from "lucide-react";
 
 const SOLSCAN_BASE = "https://solscan.io/tx";
@@ -51,6 +52,7 @@ export default function SettleBPage({ onBack }: Props) {
   const { program, wallet } = useAnchorContext();
   const schemeB = useSchemeB(program, wallet);
   const { t } = useI18n();
+  const navigate = useNavigate();
 
   const [counterparty, setCounterparty] = useState("");
   const [assetAMint, setAssetAMint] = useState("");
@@ -80,6 +82,10 @@ export default function SettleBPage({ onBack }: Props) {
         </div>
         <div className="flex items-center space-x-2">
           {schemeB.error && <span className="text-xs text-red-400 bg-red-400/10 border border-red-400/20 px-2 py-0.5 rounded-md">ERROR</span>}
+          <button onClick={() => navigate("/maker")}
+            className="text-xs border border-purple-400/20 bg-purple-400/5 hover:bg-purple-400/15 px-3 py-1 rounded-md text-purple-400/60 hover:text-purple-400 transition-all cursor-pointer flex items-center gap-1.5">
+            <Cpu size={12} />Maker
+          </button>
           <span className="text-xs border border-slate-700/50 bg-slate-800/80 px-3 py-1 rounded-md text-slate-400">
             {t.trader.step1.replace("1. ","")} → {t.trader.step2.replace("2. ","")} → {t.trader.step3.replace("3. ","")}
           </span>

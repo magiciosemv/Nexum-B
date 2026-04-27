@@ -10,6 +10,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from "react"
 import { useAnchorContext } from "../context/WalletProvider";
 import { useI18n } from "../context/I18nProvider";
 import { PublicKey } from "@solana/web3.js";
+import { useNavigate } from "react-router-dom";
 import { VersionSlotManager, SlotInfo, findLedgerPDA, VSlotStatus } from "@nexum/sdk";
 import {
   ArrowRightLeft, Cpu, Database, Hash, Loader2, CheckCircle2,
