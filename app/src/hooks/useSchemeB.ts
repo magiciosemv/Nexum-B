@@ -213,7 +213,7 @@ export function useSchemeB(
           asset_a_mint: mintAPubkey,
           asset_b_mint: mintBPubkey,
           transfer_amount: amount,
-          expiry_seconds: 55,
+          expiry_seconds: 50,
         });
       } catch (err: any) {
         if (err.message?.includes("already been processed")) {
@@ -296,7 +296,7 @@ export function useSchemeB(
         expiry: result.expiry,
       };
       setInitiatorState("WAITING_ACCEPT");
-      setCountdown(55);
+      setCountdown(50);
       log("Waiting for counterparty to accept (55s countdown)...");
 
       let remaining = 55;
@@ -566,6 +566,43 @@ export function useSchemeB(
     }
   }, [program, wallet, log]);
 
+  // ── Force cancel: read pending nonce from chain when state is lost ──
+  const forceCancel = useCallback(async () => {
+    if (!program || !wallet) return;
+    try {
+      log("Reading ledger state from chain...");
+      const mintAPubkey = new PublicKey("B31JoQhMFF2TrSJMdiSqCRGMj4jR8TD8sNzNGn4T4qQw");
+      const [ledgerA] = findLedgerPDA(wallet.publicKey, mintAPubkey, program.programId);
+      const info = await program.provider.connection.getAccountInfo(ledgerA);
+      if (!info) { setError("Ledger not found on chain"); return; }
+      const status = info.data[592];
+      if (status === 0) { log("Ledger already Active."); setInitiatorState("IDLE"); return; }
+      log(`Ledger status: ${status}. Reading pending nonce...`);
+      const nonce = info.data.readBigUInt64LE(730);
+      try {
+        await sdkCancelInitiate(program, wallet, { ledger_a: ledgerA, pending_nonce: BigInt(nonce) });
+      } catch (err: any) {
+        if (err.message?.includes("already been processed")) {
+          log("Transaction submitted, verifying...");
+        } else {
+          throw err;
+        }
+      }
+      // Verify unlock
+      await new Promise(r => setTimeout(r, 2000));
+      const info2 = await program.provider.connection.getAccountInfo(ledgerA);
+      if (info2 && info2.data[592] === 0) {
+        setInitiatorState("IDLE");
+        log("Ledger unlocked successfully.");
+      } else {
+        log("Ledger still locked. May need to wait for window expiry.");
+        setError("Ledger still locked after cancel attempt.");
+      }
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }, [program, wallet, log]);
+
   // ── Cancel actions ────────────────────────────────────────────────
   const cancelInitiateAction = useCallback(async () => {
     if (!program || !wallet || !pendingParams.current) return;
@@ -616,6 +653,7 @@ export function useSchemeB(
     executeSettlement,
     cancelInitiate: cancelInitiateAction,
     cancelMutual: cancelMutualAction,
+    forceCancel,
     error,
   };
 }

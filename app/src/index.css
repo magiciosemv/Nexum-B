@@ -1,51 +1,130 @@
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&family=Orbitron:wght@400;500;600;700;800;900&display=swap");
+/* Nexum v3 — bolder, more typographic, more cinematic
+   Distinct from v1: less green, more bone-white + signal-amber + ink-black
+   The whole feel is a Bloomberg terminal × architectural blueprint × Swiss editorial cover */
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --color-primary: #F59E0B;
-  --color-accent: #8B5CF6;
-  --color-bg: #0F172A;
-  --color-surface: #1E293B;
-  --color-border: #334155;
-  --color-foreground: #F8FAFC;
-  --color-muted: #94A3B8;
+:root{
+  --bg: #f4f1ea;            /* paper / bone */
+  --bg-2: #ece8df;
+  --ink: #0a0a0c;
+  --ink-2: #1a1a1f;
+  --ink-3: #4a4a55;
+  --ink-faint: #8a8a93;
+  --line: #d3cfc4;
+  --line-2: #b8b3a4;
+  --line-3: #6b6657;
+
+  --accent: #e2502b;        /* signal vermillion — the thing that bites */
+  --accent-2: #b53d20;
+  --accent-soft: rgba(226,80,43,.08);
+
+  --gold: #c9962f;
+  --gold-soft: rgba(201,150,47,.10);
+
+  --indigo: #1d2a55;        /* used very sparingly for institutional depth */
+  --indigo-soft: rgba(29,42,85,.08);
+
+  --green: #1f6f3e;         /* only on success/lock-confirmed */
+  --green-soft: rgba(31,111,62,.08);
+
+  --warn: #d4882a;
+  --danger: #b53d20;
+
+  /* dark inversion (used in execute terminal) */
+  --d-bg: #0a0a0c;
+  --d-bg-2: #14141a;
+  --d-bg-3: #1f1f28;
+  --d-ink: #f4f1ea;
+  --d-ink-dim: #8a8a93;
+  --d-line: #2a2a35;
+  --d-line-2: #3a3a48;
 }
 
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:'Inter Tight','Inter',system-ui,-apple-system,sans-serif;
+  font-feature-settings:'ss01','cv11';
+  -webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}
+body{min-height:100vh;overflow-x:hidden}
+
+.serif{font-family:'Fraunces','Times New Roman',serif;font-feature-settings:'ss01';font-optical-sizing:auto}
+.mono{font-family:'JetBrains Mono','IBM Plex Mono',ui-monospace,monospace;font-feature-settings:'zero','ss02'}
+.grot{font-family:'Inter Tight',system-ui,sans-serif;font-stretch:75%;font-weight:600;letter-spacing:-.01em}
+
+button{font-family:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+a{color:inherit;text-decoration:none}
+input{font-family:inherit;color:inherit}
+::selection{background:var(--ink);color:var(--bg)}
+
+/* paper grain texture — tiny multiply to break flatness */
+.grain{position:fixed;inset:0;z-index:1;pointer-events:none;mix-blend-mode:multiply;opacity:.5}
+.grain svg{width:100%;height:100%}
+
+/* hairlines */
+.hr{height:1px;background:var(--line)}
+.hr-ink{height:1px;background:var(--ink)}
+.hr-thick{height:2px;background:var(--ink)}
+.hr-dot{height:1px;background-image:linear-gradient(90deg,var(--line-2) 0 4px, transparent 4px 8px);background-size:8px 1px}
+
+/* labels */
+.label{font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-3)}
+.label-ink{font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink)}
+.eyebrow{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--ink-3)}
+
+/* tags */
+.tag{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border:1px solid var(--ink);font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;background:transparent}
+.tag.solid{background:var(--ink);color:var(--bg)}
+.tag.accent{border-color:var(--accent);color:var(--accent)}
+.tag.accent-solid{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.tag.gold{border-color:var(--gold);color:var(--gold)}
+.tag.green{border-color:var(--green);color:var(--green)}
+
+/* buttons (square, blueprint-style) */
+.btn{display:inline-flex;align-items:center;gap:10px;padding:14px 20px;border:1px solid var(--ink);font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;background:transparent;color:var(--ink);transition:all .18s ease;cursor:pointer}
+.btn:hover{background:var(--ink);color:var(--bg)}
+.btn.solid{background:var(--ink);color:var(--bg)}
+.btn.solid:hover{background:transparent;color:var(--ink)}
+.btn.accent{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.btn.accent:hover{background:transparent;color:var(--accent)}
+.btn.lg{padding:18px 28px;font-size:12px}
+.btn[disabled]{opacity:.35;cursor:not-allowed}
+.btn[disabled]:hover{background:transparent;color:var(--ink)}
+
+/* dark variants */
+.dark{background:var(--d-bg);color:var(--d-ink)}
+.dark .label{color:#9a9aa3}
+.dark .btn{border-color:var(--d-ink);color:var(--d-ink)}
+.dark .btn:hover{background:var(--d-ink);color:var(--d-bg)}
+.dark .btn.accent{background:var(--accent);color:var(--d-ink);border-color:var(--accent)}
+.dark .btn.solid{background:var(--d-ink);color:var(--d-bg)}
+.dark .btn.solid:hover{background:transparent;color:var(--d-ink)}
+
+/* animations */
+@keyframes ink-pulse{0%,100%{opacity:1}50%{opacity:.45}}
+@keyframes seal-down{0%{transform:translateY(-30px) rotate(-8deg);opacity:0}60%{transform:translateY(2px) rotate(-2deg);opacity:1}100%{transform:translateY(0) rotate(-1.5deg);opacity:1}}
+@keyframes ring-close{from{stroke-dashoffset:var(--circ)}to{stroke-dashoffset:0}}
+@keyframes type-cursor{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes marquee-y{0%{transform:translateY(0)}100%{transform:translateY(-50%)}}
+@keyframes marquee-x{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+@keyframes shrink-in{from{transform:scale(1.6);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes scan-line{0%{top:0}100%{top:100%}}
+@keyframes count-tick{0%{transform:translateY(0)}100%{transform:translateY(-100%)}}
+@keyframes glow{0%,100%{box-shadow:0 0 0 0 var(--accent)}50%{box-shadow:0 0 0 4px rgba(226,80,43,.15)}}
+
+.cursor{display:inline-block;width:.55em;height:1em;background:currentColor;vertical-align:-.12em;animation:type-cursor 1.05s steps(1) infinite;margin-left:2px}
+
+/* scrollbar */
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--bg-2)}
+::-webkit-scrollbar-thumb{background:var(--line-2);border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:var(--line-3)}
+
+/* Tailwind layer overrides — keep Tailwind for utility helpers */
 @layer base {
   body {
-    @apply bg-[var(--color-bg)] text-[var(--color-foreground)] font-sans antialiased;
+    @apply antialiased;
   }
-  ::selection {
-    @apply bg-amber-500/30 text-white;
-  }
-}
-
-@layer utilities {
-  .font-display {
-    font-family: "Orbitron", sans-serif;
-  }
-  .font-mono {
-    font-family: "JetBrains Mono", monospace;
-  }
-  .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-  .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-  .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; }
-  .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
-}
-
-@keyframes shine {
-  100% { transform: translateX(250%); }
-}
-
-@keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 20px rgba(245, 158, 11, 0.2); }
-  50% { box-shadow: 0 0 40px rgba(245, 158, 11, 0.4); }
-}
-
-@keyframes scanline {
-  0% { transform: translateY(-100%); }
-  100% { transform: translateY(100vh); }
 }

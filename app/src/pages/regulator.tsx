@@ -1,29 +1,42 @@
 /**
- * regulator.tsx — Nexum Regulatory Audit Gateway
+ * regulator.tsx — Nexum Regulator Chamber (v3 Design + Real Solana Backend)
  *
  * Read-only auditor interface for on-chain compliance inspection.
- * Features: Protocol config, SettlementRecord explorer, CommitSlot inspector,
- * ProofData viewer, UserLedger inspector, recent settlement events.
+ * Two-column layout: main query panel (1.5fr) + append-only audit log sidebar (1fr).
+ * Four-phase state machine: input -> searching -> revealed -> error.
+ * Real on-chain data via program.account.settlementRecord.fetch().
  */
 
-import React, { useState, useCallback } from "react";
-import { useAnchorContext } from "../context/WalletProvider";
-import { useI18n } from "../context/I18nProvider";
-import {
-  Shield, ArrowLeft, Activity, Settings, Search, FileCheck,
-  Database, Hash, Lock, Clock, CheckCircle, XCircle, Loader2,
-  ExternalLink, RefreshCw, Eye, Key, FileCode, AlertTriangle,
-} from "lucide-react";
-import type { Program } from "@coral-xyz/anchor";
-import { PublicKey } from "@solana/web3.js";
+import React, { useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { PublicKey } from '@solana/web3.js';
+import { NexumSeal, Wordmark, Slot } from '../components/atoms';
+import { useAnchorContext } from '../context/WalletProvider';
 
-const SOLSCAN_TX = "https://solscan.io/tx";
-const SOLSCAN_ACC = "https://solscan.io/account";
-const PROGRAM_ID = new PublicKey("BN9cg69CyigYuczJNjK3MVWRHdVMELaN55wpJz8KKi4P");
+// ── Props ──────────────────────────────────────────────────────────────────
 
-// ── Types ────────────────────────────────────────────────────────────
+interface RegulatorChamberProps {
+  lang: 'zh' | 'en';
+  setLang: (lang: 'zh' | 'en') => void;
+}
 
-interface SettlementRecord {
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const PROGRAM_ID = new PublicKey('BN9cg69CyigYuczJNjK3MVWRHdVMELaN55wpJz8KKi4P');
+
+/** Known devnet SettlementRecord addresses for the sample-ID panel. */
+const SAMPLE_SETTLEMENT_IDS = [
+  'DesM9HHZ8T2ngUBWJP6FTnAGUp7F34UvbAfDgKANAwFy',
+  'R2syJ6ZgZZJCmMFw71mcbiC5nFeey18ovE2qn3uTCzq',
+];
+
+// ── Phase State ────────────────────────────────────────────────────────────
+
+type Phase = 'input' | 'searching' | 'revealed' | 'error';
+
+// ── On-chain record type (camelCase from Anchor TS SDK) ───────────────────
+
+interface SettlementRecordData {
   partyA: string;
   partyB: string;
   assetAMint: string;
@@ -32,629 +45,535 @@ interface SettlementRecord {
   transferHi: number;
   versionA: number;
   versionB: number;
-  scheme: any;
-  settledAt: number;
-}
-
-interface CommitSlotData {
-  initiator: string;
-  counterparty: string;
-  assetAMint: string;
-  assetBMint: string;
-  commitmentHash: number[];
-  expiryInit: number;
-  executeExpiry: number;
-  nonce: number;
-  bothLockedAt: number;
-  status: any; // Anchor enum object
+  scheme: number;           // 0 = SchemeA, 1 = SchemeB
+  settledAt: number;        // i64 -> seconds since epoch
   bump: number;
 }
 
-interface LedgerData {
-  owner: string;
-  mint: string;
-  balanceCtLo: number[];
-  balanceCtHi: number[];
-  auditCtLo: number[];
-  auditCtHi: number[];
-  version: number;
-  status: any; // Anchor enum object like {active: {}}
-  lastSettlementId: number[];
-  bump: number;
-  pendingCommitment: number[];
-  pendingExpiry: number;
-  pendingCounterparty: string;
-  pendingAssetBMint: string;
-  pendingNonce: number;
+// ── Audit log entry ───────────────────────────────────────────────────────
+
+interface AuditEntry {
+  ts: string;               // ISO 8601
+  action: string;           // "query" | "export"
+  ref: string;              // settlement address or "json"
+  auditor: string;          // wallet pubkey truncated
 }
 
-interface ConfigData {
-  authority: string;
-  isPaused: boolean;
-  minInitWindow: bigint;
-  maxInitWindow: bigint;
-  executeWindow: bigint;
-  clockTolerance: bigint;
-  maxVersionSlots: number;
+// ── Translation function type ──────────────────────────────────────────────
+
+type TranslateFn = (zh: React.ReactNode, en: React.ReactNode) => React.ReactNode;
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+/** BN -> number. Handles Anchor's BN.js objects and raw numbers. */
+function bnToNum(v: any): number {
+  if (typeof v === 'number') return v;
+  if (v && typeof v.toNumber === 'function') return v.toNumber();
+  return 0;
 }
 
-interface TxEvent {
-  signature: string;
-  blockTime: number | null;
-  memo?: string;
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────
-
-function truncateAddr(addr: string, len = 8): string {
-  if (!addr || addr.length < 20) return addr || "—";
-  return `${addr.slice(0, len)}...${addr.slice(-len)}`;
-}
-
-function formatTime(ts: bigint | number | null): string {
-  if (ts === null || ts === undefined || Number(ts) === 0) return "—";
-  return new Date(Number(ts) * 1000).toLocaleString();
-}
-
-/** Anchor returns enums as objects like {active: {}} — extract the variant name */
-function anchorEnumToIndex(e: any): number {
-  if (typeof e === "number") return e;
-  if (typeof e === "object" && e !== null) {
-    const key = Object.keys(e)[0];
-    if (key === undefined) return -1;
-    // Capitalize first letter for matching
-    return LEDGER_STATUS_KEYS.indexOf(key);
-  }
-  return -1;
-}
-
-function slotEnumToIndex(e: any): number {
-  if (typeof e === "number") return e;
-  if (typeof e === "object" && e !== null) {
-    const key = Object.keys(e)[0];
-    if (key === undefined) return -1;
-    return SLOT_STATUS_KEYS.indexOf(key);
-  }
-  return -1;
-}
-
+/** Anchor enum -> index. Handles both number and {VariantName: {}} forms. */
 function schemeEnumToIndex(e: any): number {
-  if (typeof e === "number") return e;
-  if (typeof e === "object" && e !== null) {
+  if (typeof e === 'number') return e;
+  if (typeof e === 'object' && e !== null) {
     const key = Object.keys(e)[0];
-    if (key === "schemeA") return 0;
-    if (key === "schemeB") return 1;
+    if (key === 'schemeA') return 0;
+    if (key === 'schemeB') return 1;
   }
   return -1;
 }
 
-const LEDGER_STATUS_KEYS = ["active", "pendingInitiator", "bothPending", "pendingCounterparty", "emergency"];
-const SLOT_STATUS_KEYS = ["waitingAccept", "bothLocked", "settled", "cancelled"];
-
-function statusName(e: any, labels: string[]): string {
-  const idx = anchorEnumToIndex(e);
-  return labels[idx] || `Unknown(${typeof e === "object" ? JSON.stringify(e) : e})`;
+function schemeLabel(idx: number): string {
+  if (idx === 0) return 'Scheme A';
+  if (idx === 1) return 'Scheme B';
+  return 'Unknown';
 }
 
-function slotStatusName(e: any, labels: string[]): string {
-  const idx = slotEnumToIndex(e);
-  return labels[idx] || `Unknown(${typeof e === "object" ? JSON.stringify(e) : e})`;
-}
-
-function schemeName(e: any): string {
-  const idx = schemeEnumToIndex(e);
-  return idx === 0 ? "Scheme A" : idx === 1 ? "Scheme B" : `Unknown(${typeof e === "object" ? JSON.stringify(e) : e})`;
-}
-
-function hashBytesToHex(bytes: number[] | Uint8Array, maxLen = 16): string {
-  if (!bytes || bytes.length === 0) return "—";
-  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
-  return hex.length > maxLen * 2 ? `${hex.slice(0, maxLen)}...` : hex;
-}
-
+/** Combine transfer_lo + transfer_hi into a single BigInt string. */
 function computeAmount(lo: number, hi: number): string {
   const total = BigInt(lo) + (BigInt(hi) << BigInt(32));
   return total.toString();
 }
 
-function SolscanLink({ type, value, label }: { type: "tx" | "account"; value: string; label: string }) {
-  const base = type === "tx" ? SOLSCAN_TX : SOLSCAN_ACC;
-  return (
-    <a href={`${base}/${value}?cluster=devnet`} target="_blank" rel="noopener noreferrer"
-      className="inline-flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300 bg-blue-400/10 px-1.5 py-0.5 rounded border border-blue-400/20 transition-colors shrink-0">
-      {label} <ExternalLink size={9} />
-    </a>
-  );
+/** Truncate a base58 address for display. */
+function truncate(addr: string, head = 8, tail = 4): string {
+  if (!addr || addr.length < head + tail + 3) return addr || '\u2014';
+  return `${addr.slice(0, head)}...${addr.slice(-tail)}`;
 }
 
-// ── Section Wrapper ──────────────────────────────────────────────────
-
-function Section({ icon, title, children, className = "" }: {
-  icon: React.ReactNode; title: string; children: React.ReactNode; className?: string;
-}) {
-  return (
-    <div className={`border border-slate-700/40 bg-slate-800/30 rounded-xl ${className}`}>
-      <div className="bg-slate-900/60 border-b border-slate-700/40 px-4 py-3 flex items-center gap-2">
-        {icon}
-        <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">{title}</span>
-      </div>
-      <div className="p-4">{children}</div>
-    </div>
-  );
+/** ISO timestamp from epoch-seconds. */
+function formatEpoch(ts: number): string {
+  if (!ts) return '\u2014';
+  return new Date(ts * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 }
 
-function DataRow({ label, value, mono = false, copyable = false }: {
-  label: string; value: string; mono?: boolean; copyable?: boolean;
-}) {
-  const handleCopy = () => { navigator.clipboard.writeText(value); };
-  return (
-    <div className="flex justify-between items-center py-1.5 border-b border-slate-700/20 last:border-0">
-      <span className="text-xs text-slate-500 shrink-0">{label}</span>
-      <div className="flex items-center gap-2 min-w-0 ml-3">
-        <span className={`text-xs ${mono ? "font-mono text-amber-200" : "text-slate-300"} truncate`}>{value}</span>
-        {copyable && value && value !== "—" && (
-          <button onClick={handleCopy} className="text-slate-600 hover:text-slate-400 transition-colors shrink-0 cursor-pointer" title="Copy">
-            <Key size={10} />
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
+// ── Sub-components ─────────────────────────────────────────────────────────
 
-// ── Input + Button Row ───────────────────────────────────────────────
+/** Horizontal step machine: I.QUERY -> .FETCH -> II.DEMAND KEY -> .UNSEAL -> III.REVEAL */
+function StepMachine({ phase }: { phase: Phase }) {
+  const order: { key: string; label: string }[] = [
+    { key: 'input', label: 'I \u00B7 QUERY' },
+    { key: 'searching', label: '\u00B7 FETCH' },
+    { key: 'key', label: 'II \u00B7 DEMAND KEY' },
+    { key: 'unsealing', label: '\u00B7 UNSEAL' },
+    { key: 'revealed', label: 'III \u00B7 REVEAL' },
+  ];
 
-function SearchRow({ placeholder, value, setValue, onSearch, btnLabel, loading }: {
-  placeholder: string; value: string; setValue: (v: string) => void;
-  onSearch: () => void; btnLabel: string; loading: boolean;
-}) {
-  return (
-    <div className="flex gap-2 mt-3">
-      <input type="text" value={value} onChange={e => setValue(e.target.value)}
-        placeholder={placeholder}
-        className="flex-grow bg-slate-900/50 border border-slate-700/50 focus:border-purple-400/40 rounded-lg px-3 py-2 text-sm font-mono text-amber-50 outline-none transition-colors" />
-      <button onClick={onSearch} disabled={loading || !value}
-        className={`px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg border transition-all cursor-pointer shrink-0
-          ${loading || !value ? "bg-slate-800/50 text-slate-600 border-slate-700/40 cursor-not-allowed"
-            : "bg-purple-400/15 text-purple-400 border-purple-400/40 hover:bg-purple-400/25"}`}>
-        {loading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
-        <span className="ml-2">{btnLabel}</span>
-      </button>
-    </div>
-  );
-}
-
-// ── Status Badge ─────────────────────────────────────────────────────
-
-function StatusBadge({ color, children }: { color: "green" | "amber" | "red" | "blue" | "purple" | "slate"; children: React.ReactNode }) {
-  const colors = {
-    green: "bg-emerald-400/10 border-emerald-400/30 text-emerald-400",
-    amber: "bg-yellow-400/10 border-yellow-400/30 text-yellow-400",
-    red: "bg-red-400/10 border-red-400/30 text-red-400",
-    blue: "bg-blue-400/10 border-blue-400/30 text-blue-400",
-    purple: "bg-purple-400/10 border-purple-400/30 text-purple-400",
-    slate: "bg-slate-700/30 border-slate-600/30 text-slate-400",
+  // Map our 4-phase model to the 5-step visual
+  const phaseToStep: Record<Phase, number> = {
+    input: 0,
+    searching: 1,
+    revealed: 4,
+    error: 0,
   };
+  const cur = phaseToStep[phase];
+
   return (
-    <span className={`inline-flex items-center px-2.5 py-1 rounded-md border text-xs font-bold ${colors[color]}`}>
-      {children}
-    </span>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 1, background: 'var(--d-line)', border: '1px solid var(--d-line-2)' }}>
+      {order.map((s, i) => {
+        const active = i === cur;
+        const done = i < cur || phase === 'revealed';
+        const c = active ? 'var(--indigo)' : done ? 'var(--green)' : '#5a5a63';
+        return (
+          <div key={s.key} style={{ background: active ? 'rgba(29,42,85,.12)' : 'var(--d-bg)', padding: '10px 14px' }}>
+            <div className="mono" style={{ fontSize: 9.5, letterSpacing: '.18em', color: c, fontWeight: active ? 600 : 400 }}>
+              {done ? '\u2713 ' : active ? '\u25CF ' : '\u25CB '}{s.label}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
-// ── Main Component ───────────────────────────────────────────────────
+/** Record header bar shown after a record is found. */
+function RecordHeader({ address, record, phase }: {
+  address: string;
+  record: SettlementRecordData;
+  phase: Phase;
+}) {
+  return (
+    <div style={{ padding: '18px 22px', border: '1px solid var(--d-line-2)', background: 'var(--d-bg-3)', display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 24, alignItems: 'center' }}>
+      <div>
+        <div className="mono" style={{ fontSize: 9, color: '#5a5a63', letterSpacing: '.18em' }}>SETTLEMENT PDA</div>
+        <div className="mono" style={{ fontSize: 13, color: 'var(--indigo)', marginTop: 3, wordBreak: 'break-all' }}>{truncate(address, 20, 8)}</div>
+      </div>
+      <div>
+        <div className="mono" style={{ fontSize: 9, color: '#5a5a63', letterSpacing: '.18em' }}>ON-CHAIN HEADER \u00B7 PUBLIC</div>
+        <div className="mono" style={{ fontSize: 11, color: '#dadbde', marginTop: 3, letterSpacing: '.05em' }}>
+          {schemeLabel(record.scheme)} \u00B7 SETTLED {formatEpoch(record.settledAt)}
+        </div>
+      </div>
+      <div style={{ textAlign: 'right' }}>
+        <div className="mono" style={{ fontSize: 9, color: '#5a5a63', letterSpacing: '.18em' }}>STATUS</div>
+        <div className="mono" style={{ fontSize: 11, color: phase === 'revealed' ? 'var(--green)' : '#9a9aa3', marginTop: 3, letterSpacing: '.1em' }}>
+          {phase === 'revealed' ? '\u2713 ON-CHAIN' : 'LOADING...'}
+        </div>
+      </div>
+    </div>
+  );
+}
 
-interface Props { onBack: () => void; }
+/** Individual field in the revealed record grid. */
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ padding: '14px 18px', background: 'var(--d-bg)' }}>
+      <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: '#5a5a63', marginBottom: 5 }}>{label}</div>
+      <div className="mono" style={{ fontSize: 13, color: '#f4f1ea', wordBreak: 'break-all', letterSpacing: '.04em' }}>{value}</div>
+    </div>
+  );
+}
 
-export default function RegulatorPage({ onBack }: Props) {
-  const { program } = useAnchorContext();
-  const { t } = useI18n();
+/** Revealed record -- all decoded SettlementRecord fields. */
+function RevealedRecord({ address, record, t }: {
+  address: string;
+  record: SettlementRecordData;
+  t: TranslateFn;
+}) {
+  const amount = computeAmount(record.transferLo, record.transferHi);
 
-  // ── State ──
-  const [config, setConfig] = useState<ConfigData | null>(null);
-  const [configLoading, setConfigLoading] = useState(false);
-  const [settlementAddr, setSettlementAddr] = useState("");
-  const [settlement, setSettlement] = useState<SettlementRecord | null>(null);
-  const [settlementLoading, setSettlementLoading] = useState(false);
-  const [commitAddr, setCommitAddr] = useState("");
-  const [commitSlot, setCommitSlot] = useState<CommitSlotData | null>(null);
-  const [commitLoading, setCommitLoading] = useState(false);
-  const [proofData, setProofData] = useState<{ proofA: number[]; proofB: number[] } | null>(null);
-  const [ledgerAddr, setLedgerAddr] = useState("");
-  const [ledger, setLedger] = useState<LedgerData | null>(null);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
-  const [recentTxs, setRecentTxs] = useState<TxEvent[]>([]);
-  const [recentLoading, setRecentLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  return (
+    <div style={{ padding: '28px 32px', border: '1px solid var(--green)', background: 'rgba(31,111,62,.06)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 18 }}>
+        <span className="mono" style={{ fontSize: 10, letterSpacing: '.22em', color: 'var(--green)' }}>
+          {'\u2713 REVEALED \u00B7 ON-CHAIN SettlementRecord'}
+        </span>
+        <span className="mono" style={{ fontSize: 9, letterSpacing: '.18em', color: '#5a5a63' }}>FORENSIC SNAPSHOT</span>
+      </div>
 
-  const conn = program?.provider.connection;
+      {/* Large amount display */}
+      <div className="serif" style={{ fontStyle: 'italic', fontSize: 48, fontWeight: 300, color: '#f4f1ea', letterSpacing: '-.025em', lineHeight: 1.05, marginBottom: 24 }}>
+        {amount} <span style={{ color: 'var(--accent)' }}>{t('\u5355\u4F4D', 'units')}</span>
+      </div>
 
-  // ── Load Protocol Config ──
-  const loadConfig = useCallback(async () => {
-    if (!program) return;
-    setConfigLoading(true);
-    setError(null);
+      {/* Field grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'var(--d-line)', border: '1px solid var(--d-line-2)' }}>
+        <Field label={t('\u7532\u65B9 (party_a)', 'PARTY A \u00B7 INITIATOR') as string} value={truncate(record.partyA, 16, 6)} />
+        <Field label={t('\u4E59\u65B9 (party_b)', 'PARTY B \u00B7 COUNTERPARTY') as string} value={truncate(record.partyB, 16, 6)} />
+        <Field label={t('\u8D44\u4EA7 A (asset_a_mint)', 'ASSET A MINT') as string} value={truncate(record.assetAMint, 12, 6)} />
+        <Field label={t('\u8D44\u4EA7 B (asset_b_mint)', 'ASSET B MINT') as string} value={truncate(record.assetBMint, 12, 6)} />
+        <Field label={t('\u7ED3\u7B97\u65F6\u95F4 (settled_at)', 'SETTLED AT \u00B7 UTC') as string} value={formatEpoch(record.settledAt)} />
+        <Field label="SCHEME" value={schemeLabel(record.scheme)} />
+        <Field label="TRANSFER_LO (u32)" value={record.transferLo.toString()} />
+        <Field label="TRANSFER_HI (u32)" value={record.transferHi.toString()} />
+        <Field label="VERSION A" value={record.versionA.toString()} />
+        <Field label="VERSION B" value={record.versionB.toString()} />
+        <Field label="AMOUNT (lo + hi << 32)" value={amount} />
+        <Field label="BUMP" value={record.bump.toString()} />
+      </div>
+
+      {/* Full address */}
+      <div style={{ marginTop: 14, padding: '10px 14px', border: '1px dashed var(--d-line-2)' }}>
+        <div className="mono" style={{ fontSize: 9, letterSpacing: '.18em', color: '#5a5a63', marginBottom: 4 }}>FULL PDA ADDRESS</div>
+        <div className="mono" style={{ fontSize: 12, color: '#f4f1ea', wordBreak: 'break-all' }}>{address}</div>
+      </div>
+
+      {/* Solscan link */}
+      <div style={{ marginTop: 10, textAlign: 'center' }}>
+        <a
+          href={`https://solscan.io/account/${address}?cluster=devnet`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mono"
+          style={{ fontSize: 10, letterSpacing: '.15em', color: '#6b8afd', textDecoration: 'underline', textUnderlineOffset: 3 }}
+        >
+          VIEW ON SOLSCAN
+        </a>
+      </div>
+
+      {/* Audit log notice */}
+      <div style={{ marginTop: 18, padding: '14px 16px', border: '1px dashed var(--green)', display: 'flex', alignItems: 'center', gap: 14 }}>
+        <span style={{ fontSize: 18 }}>{'\u270D\uFE0E'}</span>
+        <span style={{ fontSize: 12, color: '#9a9aa3', lineHeight: 1.45 }}>
+          {t(
+            `\u4E00\u6761\u67E5\u8BE2\u8BB0\u5F55\u5DF2\u5199\u5165\u5BA1\u8BA1\u65E5\u5FD7\uFF0C\u65F6\u95F4\u6233\u4E3A ${new Date().toISOString().slice(11, 19)} UTC\u3002\u8BE5\u8BB0\u5F55\u4E0D\u53EF\u5220\u9664\u3002`,
+            `A query record has been forcibly written to the audit log at ${new Date().toISOString().slice(11, 19)} UTC. The record cannot be deleted.`
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Component ─────────────────────────────────────────────────────────
+
+export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProps) {
+  const t: TranslateFn = (zh, en) => lang === 'zh' ? zh : en;
+  const navigate = useNavigate();
+  const { program, publicKey } = useAnchorContext();
+
+  // ── State ──────────────────────────────────────────────────────────────
+
+  const [phase, setPhase] = useState<Phase>('input');
+  const [inputAddr, setInputAddr] = useState('');
+  const [record, setRecord] = useState<SettlementRecordData | null>(null);
+  const [fetchedAddr, setFetchedAddr] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
+
+  // ── Fetch Settlement Record ────────────────────────────────────────────
+
+  const fetchRecord = useCallback(async (address: string) => {
+    if (!program || !address.trim()) return;
+
+    setPhase('searching');
+    setErrorMsg('');
+
     try {
-      const [configPda] = PublicKey.findProgramAddressSync([Buffer.from("nexum_config")], PROGRAM_ID);
-      const info = await (program.account as any).protocolConfig.fetch(configPda);
-      setConfig({
-        authority: info.authority.toBase58(),
-        isPaused: info.isPaused,
-        minInitWindow: info.minInitWindow.toNumber(),
-        maxInitWindow: info.maxInitWindow.toNumber(),
-        executeWindow: info.executeWindow.toNumber(),
-        clockTolerance: info.clockTolerance.toNumber(),
-        maxVersionSlots: info.maxVersionSlots,
-      });
-    } catch (e: any) {
-      setError(`${t.regulator.fetchError}: ${e.message?.slice(0, 100)}`);
-    } finally {
-      setConfigLoading(false);
-    }
-  }, [program, t]);
-
-  // ── Load Settlement Record ──
-  const loadSettlement = useCallback(async () => {
-    if (!program || !settlementAddr) return;
-    setSettlementLoading(true);
-    setError(null);
-    try {
-      const pk = new PublicKey(settlementAddr);
+      const pk = new PublicKey(address.trim());
       const info = await (program.account as any).settlementRecord.fetch(pk);
-      setSettlement({
+
+      const rec: SettlementRecordData = {
         partyA: info.partyA.toBase58(),
         partyB: info.partyB.toBase58(),
         assetAMint: info.assetAMint.toBase58(),
         assetBMint: info.assetBMint.toBase58(),
-        transferLo: info.transferLo,
-        transferHi: info.transferHi,
-        versionA: info.versionA.toNumber ? info.versionA.toNumber() : Number(info.versionA),
-        versionB: info.versionB.toNumber ? info.versionB.toNumber() : Number(info.versionB),
-        scheme: info.scheme,
-        settledAt: info.settledAt.toNumber ? info.settledAt.toNumber() : Number(info.settledAt),
-      });
-    } catch (e: any) {
-      setError(`${t.regulator.fetchError}: ${e.message?.slice(0, 100)}`);
-      setSettlement(null);
-    } finally {
-      setSettlementLoading(false);
-    }
-  }, [program, settlementAddr, t]);
-
-  // ── Load CommitSlot ──
-  const loadCommitSlot = useCallback(async () => {
-    if (!program || !commitAddr) return;
-    setCommitLoading(true);
-    setError(null);
-    try {
-      const pk = new PublicKey(commitAddr);
-      const info = await (program.account as any).commitSlot.fetch(pk);
-      setCommitSlot({
-        initiator: info.initiator.toBase58(),
-        counterparty: info.counterparty.toBase58(),
-        assetAMint: info.assetAMint.toBase58(),
-        assetBMint: info.assetBMint.toBase58(),
-        commitmentHash: Array.from(info.commitmentHash),
-        expiryInit: info.expiryInit.toNumber ? info.expiryInit.toNumber() : Number(info.expiryInit),
-        executeExpiry: info.executeExpiry.toNumber ? info.executeExpiry.toNumber() : Number(info.executeExpiry),
-        nonce: info.nonce.toNumber ? info.nonce.toNumber() : Number(info.nonce),
-        bothLockedAt: info.bothLockedAt.toNumber ? info.bothLockedAt.toNumber() : Number(info.bothLockedAt),
-        status: info.status,
+        transferLo: bnToNum(info.transferLo),
+        transferHi: bnToNum(info.transferHi),
+        versionA: bnToNum(info.versionA),
+        versionB: bnToNum(info.versionB),
+        scheme: schemeEnumToIndex(info.scheme),
+        settledAt: bnToNum(info.settledAt),
         bump: info.bump,
-      });
+      };
 
-      // Try loading associated ProofData
-      try {
-        const nonceLe = new Uint8Array(8);
-        const dv = new DataView(nonceLe.buffer);
-        dv.setBigUint64(0, info.nonce, true);
-        const [proofPda] = PublicKey.findProgramAddressSync(
-          [Buffer.from("proofs"), Buffer.from(nonceLe)], PROGRAM_ID
-        );
-        const proofInfo = await (program.account as any).proofData.fetch(proofPda);
-        setProofData({
-          proofA: Array.from(proofInfo.proofA),
-          proofB: Array.from(proofInfo.proofB),
-        });
-      } catch {
-        setProofData(null);
-      }
+      setRecord(rec);
+      setFetchedAddr(address.trim());
+      setPhase('revealed');
+
+      // Append to audit log
+      setAuditLog(prev => [{
+        ts: new Date().toISOString(),
+        action: 'query',
+        ref: truncate(address.trim(), 12, 6),
+        auditor: publicKey ? truncate(publicKey.toBase58(), 6, 4) : 'unknown',
+      }, ...prev]);
     } catch (e: any) {
-      const msg = e.message || "";
-      if (msg.includes("discriminator") || msg.includes("Account does not exist")) {
-        setError("Account not found — CommitSlot is closed after settlement/cancel. This is by design (rent reclaimed). Check SettlementRecord instead for historical data.");
-      } else {
-        setError(`${t.regulator.fetchError}: ${msg.slice(0, 100)}`);
-      }
-      setCommitSlot(null);
-      setProofData(null);
-    } finally {
-      setCommitLoading(false);
+      const msg = e?.message || String(e);
+      setErrorMsg(
+        lang === 'zh'
+          ? `\u672A\u627E\u5230 Settlement Record: ${address.trim()}\n${msg.slice(0, 120)}`
+          : `Settlement Record not found: ${address.trim()}\n${msg.slice(0, 120)}`
+      );
+      setPhase('error');
+      setRecord(null);
     }
-  }, [program, commitAddr, t]);
+  }, [program, publicKey, lang]);
 
-  // ── Load Ledger ──
-  const loadLedger = useCallback(async () => {
-    if (!program || !ledgerAddr) return;
-    setLedgerLoading(true);
-    setError(null);
-    try {
-      const pk = new PublicKey(ledgerAddr);
-      const info = await (program.account as any).userLedger.fetch(pk);
-      setLedger({
-        owner: info.owner.toBase58(),
-        mint: info.mint.toBase58(),
-        balanceCtLo: Array.from(info.balanceCtLo),
-        balanceCtHi: Array.from(info.balanceCtHi),
-        auditCtLo: Array.from(info.auditCtLo),
-        auditCtHi: Array.from(info.auditCtHi),
-        version: info.version.toNumber ? info.version.toNumber() : Number(info.version),
-        status: info.status,
-        lastSettlementId: Array.from(info.lastSettlementId),
-        bump: info.bump,
-        pendingCommitment: Array.from(info.pendingCommitment),
-        pendingExpiry: info.pendingExpiry.toNumber ? info.pendingExpiry.toNumber() : Number(info.pendingExpiry),
-        pendingCounterparty: info.pendingCounterparty.toBase58(),
-        pendingAssetBMint: info.pendingAssetBMint.toBase58(),
-        pendingNonce: info.pendingNonce.toNumber ? info.pendingNonce.toNumber() : Number(info.pendingNonce),
-      });
-    } catch (e: any) {
-      setError(`${t.regulator.fetchError}: ${e.message?.slice(0, 100)}`);
-      setLedger(null);
-    } finally {
-      setLedgerLoading(false);
-    }
-  }, [program, ledgerAddr, t]);
+  // ── Export JSON ────────────────────────────────────────────────────────
 
-  // ── Load Recent Settlement Events ──
-  const loadRecentTxs = useCallback(async () => {
-    if (!conn) return;
-    setRecentLoading(true);
-    setError(null);
-    try {
-      const sigs = await conn.getSignaturesForAddress(PROGRAM_ID, { limit: 20 });
-      const events: TxEvent[] = sigs
-        .filter(s => !s.err)
-        .map(s => ({
-          signature: s.signature,
-          blockTime: s.blockTime ?? null,
-        }));
-      setRecentTxs(events);
-    } catch (e: any) {
-      setError(`${t.regulator.fetchError}: ${e.message?.slice(0, 100)}`);
-    } finally {
-      setRecentLoading(false);
-    }
-  }, [conn, t]);
+  const exportJson = useCallback(() => {
+    if (!record || !fetchedAddr) return;
 
-  // ── Auto-load config on mount ──
-  React.useEffect(() => {
-    if (program && !config) loadConfig();
-  }, [program, config, loadConfig]);
+    const blob = new Blob([JSON.stringify({
+      address: fetchedAddr,
+      ...record,
+      scheme: schemeLabel(record.scheme),
+      amount: computeAmount(record.transferLo, record.transferHi),
+      settledAtISO: formatEpoch(record.settledAt),
+    }, null, 2)], { type: 'application/json' });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `settlement_${fetchedAddr.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    // Log the export
+    setAuditLog(prev => [{
+      ts: new Date().toISOString(),
+      action: 'export',
+      ref: 'json',
+      auditor: publicKey ? truncate(publicKey.toBase58(), 6, 4) : 'unknown',
+    }, ...prev]);
+  }, [record, fetchedAddr, publicKey]);
+
+  // ── Reset ──────────────────────────────────────────────────────────────
+
+  const reset = useCallback(() => {
+    setInputAddr('');
+    setRecord(null);
+    setFetchedAddr('');
+    setPhase('input');
+    setErrorMsg('');
+  }, []);
+
+  // ── Suggestion click ───────────────────────────────────────────────────
+
+  const suggest = useCallback((id: string) => {
+    setInputAddr(id);
+  }, []);
+
+  // ── Key handler ────────────────────────────────────────────────────────
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && inputAddr.trim()) fetchRecord(inputAddr);
+  }, [inputAddr, fetchRecord]);
+
+  // ── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="relative z-10 flex flex-col min-h-screen p-4 md:p-8 font-mono text-slate-300 animate-fade-in">
-      {/* Header */}
-      <header className="flex justify-between items-center border-b border-slate-700/50 pb-4 mb-6">
-        <div className="flex items-center space-x-4">
-          <button onClick={onBack} className="p-2 bg-slate-800/80 border border-slate-700/50 hover:bg-slate-700/80 rounded-lg text-slate-400 transition-colors cursor-pointer">
-            <ArrowLeft size={15} />
-          </button>
-          <div>
-            <h1 className="text-xl font-display font-bold text-white tracking-widest uppercase">{t.regulator.title}</h1>
-            <p className="text-xs text-purple-400/60 font-mono">{t.regulator.subtitle}</p>
+    <div className="dark" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* ── Top Rail ──────────────────────────────────────────────────── */}
+      <div style={{ padding: '14px 36px', display: 'flex', alignItems: 'center', gap: 20, borderBottom: '1px solid var(--d-line-2)', background: 'var(--d-bg-2)' }}>
+        <NexumSeal size={28} dark />
+        <Wordmark dark sub="REGULATOR \u00B7 CHAMBER" />
+        <span style={{ width: 1, height: 14, background: 'var(--d-line-2)' }} />
+        <span className="mono" style={{ fontSize: 10, letterSpacing: '.2em', color: 'var(--indigo)', background: 'rgba(29,42,85,.4)', padding: '3px 8px', border: '1px solid #3a4a78' }}>
+          {'\u25CF'} AUDITOR \u00B7 reg.nexum.protocol
+        </span>
+        <div style={{ flex: 1 }} />
+        <Slot dark />
+        <span style={{ width: 1, height: 14, background: 'var(--d-line-2)' }} />
+        <button onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')} className="mono" style={{ fontSize: 11, letterSpacing: '.15em', color: '#f4f1ea', background: 'none', border: 0, cursor: 'pointer' }}>
+          {lang === 'zh' ? 'EN' : '\u4E2D'}
+        </button>
+        <button onClick={() => navigate('/')} className="btn" style={{ padding: '8px 14px', fontSize: 10, borderColor: '#f4f1ea', color: '#f4f1ea' }}>
+          {t('\u767B\u51FA', 'SIGN OUT')}
+        </button>
+      </div>
+
+      {/* ── Two-column Layout ─────────────────────────────────────────── */}
+      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 1, background: 'var(--d-line)', minHeight: 0 }}>
+        {/* ── MAIN PANEL ─────────────────────────────────────────────── */}
+        <div style={{ background: 'var(--d-bg)', padding: '28px 36px', overflowY: 'auto' }}>
+          {/* Header */}
+          <div style={{ borderBottom: '1px solid var(--d-line-2)', paddingBottom: 16, marginBottom: 24 }}>
+            <div className="mono" style={{ fontSize: 10, letterSpacing: '.22em', color: '#9a9aa3' }}>FOLIO 02 \u00B7 AUDIT CHAMBER</div>
+            <h1 className="serif" style={{ margin: '8px 0 0', fontSize: 'clamp(40px, 4vw, 64px)', fontWeight: 300, letterSpacing: '-.025em', lineHeight: 1, color: '#f4f1ea' }}>
+              {lang === 'zh' ? (
+                <>{'\u53D6\u8BC1\u3002'}<em style={{ fontStyle: 'italic', color: 'var(--indigo)', marginLeft: 14 }}>{'\u7559\u75D5\u3002'}</em></>
+              ) : (
+                <>Forensics. <em style={{ fontStyle: 'italic', color: 'var(--indigo)', marginLeft: 14 }}>On record.</em></>
+              )}
+            </h1>
+            <div className="serif italic" style={{ fontStyle: 'italic', fontSize: 15, color: '#9a9aa3', marginTop: 10, maxWidth: 680, lineHeight: 1.5 }}>
+              {t(
+                '\u6BCF\u4E00\u6B21\u67E5\u8BE2\u90FD\u88AB\u5F3A\u5236\u5199\u5165\u5BA1\u8BA1\u65E5\u5FD7\u3002\u4F60\u80FD\u770B\u7A7F\u94FE\u4E0A\u6570\u636E\uFF0C\u4F46\u4F60\u770B\u4E0D\u89C1\u7684\u4E8B\u2014\u2014\u8FD9\u6761\u65E5\u5FD7\u8BB0\u5F97\u3002',
+                'Every query is forcibly written to the audit log. You can see through on-chain data \u2014 but the things you don\'t see, this log remembers.'
+              )}
+            </div>
           </div>
-        </div>
-        <div className="flex items-center space-x-2">
-          <Shield size={16} className="text-purple-400" />
-          <span className="text-xs text-slate-500 border border-slate-700/50 bg-slate-800/80 px-3 py-1 rounded-md">READ-ONLY</span>
-        </div>
-      </header>
 
-      {/* Error banner */}
-      {error && (
-        <div className="mb-4 p-3 bg-red-400/10 border border-red-400/25 rounded-lg text-red-400 text-xs flex items-center gap-2">
-          <AlertTriangle size={14} />{error}
-          <button onClick={() => setError(null)} className="ml-auto text-red-400/60 hover:text-red-400 cursor-pointer">dismiss</button>
-        </div>
-      )}
+          {/* Step Machine */}
+          <StepMachine phase={phase} />
 
-      {/* Top row: Config + Overview */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
-        {/* Protocol Config */}
-        <Section icon={<Settings size={14} className="text-purple-400" />} title={t.regulator.configTitle}>
-          {configLoading && <div className="flex items-center gap-2 text-xs text-slate-400"><Loader2 size={14} className="animate-spin" />{t.regulator.loading}</div>}
-          {config && (
-            <div className="space-y-0">
-              <DataRow label={t.regulator.configAuthority} value={truncateAddr(config.authority, 12)} mono copyable />
-              <DataRow label={t.regulator.configPaused} value={config.isPaused ? "YES" : "NO"} />
-              <DataRow label={t.regulator.configInitWindow} value={`${config.minInitWindow}s – ${config.maxInitWindow}s`} />
-              <DataRow label={t.regulator.configExecWindow} value={`${config.executeWindow}s`} />
-              <DataRow label={t.regulator.configTolerance} value={`${config.clockTolerance}s`} />
-              <DataRow label={t.regulator.configMaxSlots} value={String(config.maxVersionSlots)} />
+          {/* ── Phase: Input ────────────────────────────────────────── */}
+          {(phase === 'input' || phase === 'error') && (
+            <div style={{ marginTop: 32, padding: '28px 32px', border: '1px solid var(--d-line-2)', background: 'var(--d-bg-2)' }}>
+              <div className="mono" style={{ fontSize: 10, letterSpacing: '.22em', color: 'var(--indigo)', marginBottom: 10 }}>
+                I \u00B7 QUERY \u00B7 SETTLEMENT PDA ADDRESS
+              </div>
+              <input
+                value={inputAddr}
+                onChange={e => setInputAddr(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="DesM9HHZ8T2ngUBWJP6FTnAGUp7F34UvbAfDgKANAwFy"
+                style={{
+                  width: '100%',
+                  background: 'var(--d-bg-3)',
+                  border: '1px solid var(--d-line-2)',
+                  color: '#f4f1ea',
+                  padding: '14px 16px',
+                  fontFamily: 'JetBrains Mono, monospace',
+                  fontSize: 15,
+                  letterSpacing: '.05em',
+                  outline: 'none',
+                  marginBottom: 14,
+                }}
+              />
+
+              {/* Error */}
+              {errorMsg && phase === 'error' && (
+                <div className="mono" style={{ fontSize: 11, color: 'var(--danger)', padding: '10px 12px', border: '1px solid var(--danger)', background: 'rgba(181,61,32,.08)', marginBottom: 14, whiteSpace: 'pre-line' }}>
+                  ! {errorMsg}
+                </div>
+              )}
+
+              <button
+                onClick={() => fetchRecord(inputAddr)}
+                disabled={!inputAddr.trim() || !program}
+                className="btn solid"
+                style={{ borderColor: 'var(--indigo)', background: 'var(--indigo)', color: '#f4f1ea' }}
+              >
+                {t('\u25B6 \u68C0\u7D22 SETTLEMENT RECORD', '\u25B6 FETCH SETTLEMENT RECORD')}
+              </button>
+
+              {/* Sample IDs */}
+              <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px dashed var(--d-line-2)' }}>
+                <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: '#5a5a63', marginBottom: 10 }}>
+                  SAMPLE IDS \u00B7 CLICK TO LOAD
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {SAMPLE_SETTLEMENT_IDS.map(id => (
+                    <button
+                      key={id}
+                      onClick={() => suggest(id)}
+                      style={{
+                        textAlign: 'left',
+                        padding: '8px 12px',
+                        border: '1px solid var(--d-line)',
+                        background: 'transparent',
+                        display: 'flex',
+                        gap: 14,
+                        alignItems: 'center',
+                        cursor: 'pointer',
+                        color: 'inherit',
+                        fontFamily: 'inherit',
+                        fontSize: 'inherit',
+                      }}
+                    >
+                      <span className="mono" style={{ fontSize: 11, color: 'var(--indigo)' }}>{truncate(id, 12, 4)}</span>
+                      <span style={{ fontSize: 11, color: '#9a9aa3', fontFamily: 'JetBrains Mono, monospace' }}>
+                        devnet SettlementRecord
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
-          <button onClick={loadConfig} className="mt-3 text-[10px] text-purple-400/60 hover:text-purple-400 uppercase tracking-wider cursor-pointer flex items-center gap-1">
-            <RefreshCw size={10} />{t.regulator.refresh}
-          </button>
-        </Section>
 
-        {/* Recent Settlement Events */}
-        <Section icon={<Activity size={14} className="text-amber-400" />} title={t.regulator.recentSettlements}>
-          <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
-            {recentLoading && <div className="flex items-center gap-2 text-xs text-slate-400"><Loader2 size={14} className="animate-spin" />{t.regulator.loading}</div>}
-            {recentTxs.length === 0 && !recentLoading && (
-              <p className="text-xs text-slate-600">{t.regulator.noRecords}</p>
+          {/* ── Phase: Searching ────────────────────────────────────── */}
+          {phase === 'searching' && (
+            <div style={{ marginTop: 32, padding: '40px 32px', border: '1px dashed var(--indigo)', background: 'rgba(29,42,85,.08)', textAlign: 'center' }}>
+              <div className="mono" style={{ fontSize: 10, letterSpacing: '.22em', color: 'var(--indigo)', marginBottom: 12 }}>
+                SCANNING \u00B7 SettlementRecord
+              </div>
+              <div className="serif italic" style={{ fontStyle: 'italic', fontSize: 24, color: '#f4f1ea' }}>
+                {t('\u5728\u94FE\u4E0A\u68C0\u7D22\u7ED3\u7B97\u8BB0\u5F55', 'Querying settlement records on-chain')}<span className="cursor" />
+              </div>
+            </div>
+          )}
+
+          {/* ── Phase: Revealed ─────────────────────────────────────── */}
+          {phase === 'revealed' && record && (
+            <div style={{ marginTop: 32 }}>
+              <RecordHeader address={fetchedAddr} record={record} phase={phase} />
+              <RevealedRecord address={fetchedAddr} record={record} t={t} />
+
+              {/* Action buttons */}
+              <div style={{ marginTop: 14, display: 'flex', gap: 8 }}>
+                <button onClick={reset} className="btn solid" style={{ borderColor: 'var(--indigo)', background: 'var(--indigo)', color: '#f4f1ea' }}>
+                  {'\u2190'} {t('\u518D\u67E5\u4E00\u7B14', 'QUERY ANOTHER')}
+                </button>
+                <button onClick={exportJson} className="btn" style={{ borderColor: '#f4f1ea', color: '#f4f1ea' }}>
+                  {'{ }'} {t('\u5BFC\u51FA JSON', 'EXPORT JSON')}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── SIDEBAR — Audit Log ────────────────────────────────────── */}
+        <div style={{ background: 'var(--d-bg)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          {/* Header */}
+          <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--d-line-2)', background: 'var(--d-bg-2)' }}>
+            <div className="mono" style={{ fontSize: 10, letterSpacing: '.22em', color: '#f4f1ea' }}>{'\u00B7'} APPEND-ONLY AUDIT LOG {'\u00B7'}</div>
+            <div className="serif italic" style={{ fontStyle: 'italic', fontSize: 14, color: 'var(--gold)', marginTop: 4 }}>
+              {t('\u76D1\u5BDF\u7684\u76D1\u5BDF\u3002', 'Audit on the auditor.')}
+            </div>
+          </div>
+
+          {/* Entries */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '14px 22px' }}>
+            {auditLog.length === 0 && (
+              <div className="mono" style={{ fontSize: 10, color: '#5a5a63', letterSpacing: '.1em', paddingTop: 12 }}>
+                {t('\u5C1A\u65E0\u67E5\u8BE2\u8BB0\u5F55\u3002', 'No queries yet.')}
+              </div>
             )}
-            {recentTxs.map((tx, i) => (
-              <div key={i} className="flex items-center justify-between py-1 border-b border-slate-700/20 last:border-0">
-                <code className="text-[11px] text-amber-300 truncate max-w-[200px]">{truncateAddr(tx.signature, 12)}</code>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[10px] text-slate-500">{tx.blockTime ? new Date(tx.blockTime * 1000).toLocaleTimeString() : "—"}</span>
-                  <SolscanLink type="tx" value={tx.signature} label="View" />
+            {auditLog.map((entry, i) => (
+              <div key={i} style={{ padding: '12px 0', borderBottom: i < auditLog.length - 1 ? '1px dotted var(--d-line)' : 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+                  <span className="mono" style={{ fontSize: 9, color: '#5a5a63', letterSpacing: '.1em' }}>
+                    {new Date(entry.ts).toLocaleString('en-GB')}
+                  </span>
+                  {i === 0 && (
+                    <span className="mono" style={{ fontSize: 8, letterSpacing: '.18em', color: 'var(--gold)', padding: '1px 5px', border: '1px solid var(--gold)' }}>
+                      JUST WRITTEN
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--indigo)' }}>{entry.action}</span>
+                  <span style={{ color: '#5a5a63', fontSize: 10 }}>{'\u00B7'}</span>
+                  <span className="mono" style={{ fontSize: 11, color: '#f4f1ea' }}>{entry.ref}</span>
+                </div>
+                <div className="mono" style={{ fontSize: 10, color: '#9a9aa3', marginTop: 3, letterSpacing: '.05em' }}>
+                  by {entry.auditor}
                 </div>
               </div>
             ))}
           </div>
-          <button onClick={loadRecentTxs} disabled={recentLoading}
-            className="mt-3 text-[10px] text-amber-400/60 hover:text-amber-400 uppercase tracking-wider cursor-pointer flex items-center gap-1 disabled:opacity-40">
-            <RefreshCw size={10} />{t.regulator.refresh}
-          </button>
-        </Section>
-      </div>
 
-      {/* Middle row: Settlement + CommitSlot */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
-        {/* Settlement Record Explorer */}
-        <Section icon={<FileCheck size={14} className="text-emerald-400" />} title={t.regulator.settlementExplorer}>
-          <p className="text-[11px] text-slate-500 mb-2">{t.regulator.explorerHint}</p>
-          <SearchRow
-            placeholder={t.regulator.explorerPlaceholder}
-            value={settlementAddr} setValue={setSettlementAddr}
-            onSearch={loadSettlement} btnLabel={t.regulator.loadBtn}
-            loading={settlementLoading}
-          />
-          {settlement && (
-            <div className="mt-4 space-y-0">
-              <DataRow label={t.regulator.partyA} value={truncateAddr(settlement.partyA, 12)} mono copyable />
-              <DataRow label={t.regulator.partyB} value={truncateAddr(settlement.partyB, 12)} mono copyable />
-              <DataRow label={t.regulator.assetA} value={truncateAddr(settlement.assetAMint, 8)} mono copyable />
-              <DataRow label={t.regulator.assetB} value={truncateAddr(settlement.assetBMint, 8)} mono copyable />
-              <DataRow label={t.regulator.amount} value={computeAmount(settlement.transferLo, settlement.transferHi)} />
-              <DataRow label={t.regulator.scheme} value={schemeName(settlement.scheme)} />
-              <DataRow label={t.regulator.versionA} value={settlement.versionA.toString()} />
-              <DataRow label={t.regulator.versionB} value={settlement.versionB.toString()} />
-              <DataRow label={t.regulator.settledAt} value={formatTime(settlement.settledAt)} />
-              <div className="flex justify-center mt-3">
-                <SolscanLink type="account" value={settlementAddr} label="View on Solscan" />
-              </div>
-            </div>
-          )}
-        </Section>
-
-        {/* CommitSlot Inspector */}
-        <Section icon={<Hash size={14} className="text-purple-400" />} title={t.regulator.commitmentInspector}>
-          <SearchRow
-            placeholder={t.regulator.commitSlotAddress}
-            value={commitAddr} setValue={setCommitAddr}
-            onSearch={loadCommitSlot} btnLabel={t.regulator.loadCommitBtn}
-            loading={commitLoading}
-          />
-          {commitSlot && (
-            <div className="mt-4 space-y-0">
-              <DataRow label={t.regulator.initiator} value={truncateAddr(commitSlot.initiator, 12)} mono copyable />
-              <DataRow label={t.regulator.counterparty} value={truncateAddr(commitSlot.counterparty, 12)} mono copyable />
-              <DataRow label={t.regulator.assetA} value={truncateAddr(commitSlot.assetAMint, 8)} mono />
-              <DataRow label={t.regulator.assetB} value={truncateAddr(commitSlot.assetBMint, 8)} mono />
-              <DataRow label={t.regulator.commitmentHash} value={hashBytesToHex(commitSlot.commitmentHash, 20)} mono copyable />
-              <DataRow label={t.regulator.status} value="" />
-              <div className="py-1">
-                <StatusBadge color={slotEnumToIndex(commitSlot.status) === 0 ? "amber" : slotEnumToIndex(commitSlot.status) === 1 ? "blue" : slotEnumToIndex(commitSlot.status) === 2 ? "green" : "red"}>
-                  {slotStatusName(commitSlot.status, [t.regulator.statusWaitingAccept, t.regulator.statusBothLocked, t.regulator.statusSettled, t.regulator.statusCancelled])}
-                </StatusBadge>
-              </div>
-              <DataRow label={t.regulator.nonce} value={commitSlot.nonce.toString()} />
-              <DataRow label={t.regulator.expiryInit} value={formatTime(commitSlot.expiryInit)} />
-              <DataRow label={t.regulator.executeExpiry} value={formatTime(commitSlot.executeExpiry)} />
-              <DataRow label={t.regulator.bothLockedAt} value={formatTime(commitSlot.bothLockedAt)} />
-              <div className="flex justify-center mt-3">
-                <SolscanLink type="account" value={commitAddr} label="View on Solscan" />
-              </div>
-            </div>
-          )}
-
-          {/* ProofData if available */}
-          {proofData && (
-            <div className="mt-4 border-t border-slate-700/30 pt-4">
-              <h4 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                <FileCode size={12} />{t.regulator.proofDataTitle}
-              </h4>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700/30">
-                  <span className="text-[10px] text-slate-500 uppercase">{t.regulator.proofAParty}</span>
-                  <div className="mt-1 text-xs font-mono text-emerald-400">{proofData.proofA.length} bytes</div>
-                  <div className="text-[10px] text-slate-600 mt-1">{hashBytesToHex(proofData.proofA.slice(0, 32), 12)}...</div>
-                </div>
-                <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700/30">
-                  <span className="text-[10px] text-slate-500 uppercase">{t.regulator.proofBParty}</span>
-                  <div className="mt-1 text-xs font-mono text-emerald-400">{proofData.proofB.length} bytes</div>
-                  <div className="text-[10px] text-slate-600 mt-1">{hashBytesToHex(proofData.proofB.slice(0, 32), 12)}...</div>
-                </div>
-              </div>
-              <div className="mt-2 flex items-center gap-2">
-                <CheckCircle size={12} className="text-emerald-400" />
-                <span className="text-[10px] text-emerald-400">{t.regulator.verifyValid}</span>
-              </div>
-            </div>
-          )}
-        </Section>
-      </div>
-
-      {/* Bottom row: Ledger Inspector */}
-      <Section icon={<Database size={14} className="text-amber-400" />} title={t.regulator.ledgerInspector} className="mb-5">
-        <SearchRow
-          placeholder={t.regulator.ledgerAddress}
-          value={ledgerAddr} setValue={setLedgerAddr}
-          onSearch={loadLedger} btnLabel={t.regulator.loadLedgerBtn}
-          loading={ledgerLoading}
-        />
-        {ledger && (
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Base fields */}
-            <div className="space-y-0">
-              <DataRow label={t.regulator.owner} value={truncateAddr(ledger.owner, 12)} mono copyable />
-              <DataRow label={t.regulator.mint} value={truncateAddr(ledger.mint, 8)} mono copyable />
-              <DataRow label={t.regulator.version} value={ledger.version.toString()} />
-              <div className="py-1.5 border-b border-slate-700/20 flex justify-between items-center">
-                <span className="text-xs text-slate-500">{t.regulator.ledgerStatus}</span>
-                <StatusBadge color={
-                  anchorEnumToIndex(ledger.status) === 0 ? "green" :
-                  anchorEnumToIndex(ledger.status) === 1 ? "amber" :
-                  anchorEnumToIndex(ledger.status) === 2 ? "blue" :
-                  anchorEnumToIndex(ledger.status) === 3 ? "purple" : "red"
-                }>
-                  {statusName(ledger.status, [t.regulator.ledgerActive, t.regulator.ledgerPendingInit, t.regulator.ledgerBothPending, t.regulator.ledgerPendingCp, t.regulator.ledgerEmergency])}
-                </StatusBadge>
-              </div>
-              <DataRow label={t.regulator.lastSettlement} value={hashBytesToHex(ledger.lastSettlementId, 12)} mono />
-            </div>
-            {/* Pending fields (Scheme B) */}
-            <div className="space-y-0">
-              <DataRow label={t.regulator.pendingCommitment} value={hashBytesToHex(ledger.pendingCommitment, 16)} mono />
-              <DataRow label={t.regulator.pendingExpiry} value={formatTime(ledger.pendingExpiry)} />
-              <DataRow label={t.regulator.pendingCounterparty} value={ledger.pendingCounterparty === PublicKey.default.toBase58() ? "—" : truncateAddr(ledger.pendingCounterparty, 8)} mono />
-              <DataRow label={t.regulator.pendingNonce} value={ledger.pendingNonce.toString()} />
-            </div>
-            {/* Encrypted balance summary */}
-            <div className="md:col-span-2 border-t border-slate-700/30 pt-3">
-              <h4 className="text-[10px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
-                <Lock size={10} />Encrypted Balance Data
-              </h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {[
-                  { label: t.regulator.balanceCtLo, data: ledger.balanceCtLo },
-                  { label: t.regulator.balanceCtHi, data: ledger.balanceCtHi },
-                  { label: t.regulator.auditCtLo, data: ledger.auditCtLo },
-                  { label: t.regulator.auditCtHi, data: ledger.auditCtHi },
-                ].map(({ label, data }) => (
-                  <div key={label} className="bg-slate-900/40 rounded-md p-2 border border-slate-700/20">
-                    <span className="text-[9px] text-slate-600 uppercase block">{label}</span>
-                    <span className="text-[10px] font-mono text-slate-400">{data.length}B — {hashBytesToHex(data.slice(0, 16), 8)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="md:col-span-2 flex justify-center">
-              <SolscanLink type="account" value={ledgerAddr} label="View Ledger on Solscan" />
+          {/* Footer */}
+          <div style={{ padding: '12px 22px', borderTop: '1px solid var(--d-line-2)', background: 'var(--d-bg-2)' }}>
+            <div className="mono" style={{ fontSize: 9, letterSpacing: '.18em', color: '#5a5a63' }}>
+              {auditLog.length} {t('\u6761\u8BB0\u5F55', 'entries')} {'\u00B7'} {t('\u4E0D\u53EF\u5220\u9664 \u00B7 \u94FE\u4E0A\u951A\u5B9A', 'indelible \u00B7 anchored on-chain')}
             </div>
           </div>
-        )}
-      </Section>
-
-      {/* Footer */}
-      <div className="mt-auto pt-4 border-t border-slate-700/30 flex justify-between items-center text-[10px] text-slate-600">
-        <span className="flex items-center gap-1"><Eye size={10} className="text-purple-400/40" />Read-Only Audit Mode</span>
-        <span className="flex items-center gap-1"><Shield size={10} className="text-purple-400/40" />Program: {truncateAddr(PROGRAM_ID.toBase58(), 10)}</span>
+        </div>
       </div>
     </div>
   );

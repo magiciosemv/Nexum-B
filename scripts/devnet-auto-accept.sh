@@ -14,7 +14,7 @@ export ANCHOR_PROVIDER_URL="$RPC"
 LEDGER_A="5eCAa4iBa91VzX6AvueUw8MsYXuZgXwEpNMbJSZ7bqQK"
 LEDGER_B="CjAUG1comMvGZj5rDjGaEVSuR2Q9SyRyrhWggmNkdtbD"
 CONFIG="DxqwvoyHAzzkbbpFPekfY78vgfBe7nimKMZpNGzms8jC"
-CP_KEY="scripts/keys/counterparty.json"
+CP_KEY="keys/counterparty.json"
 PROGRAM_ID="BN9cg69CyigYuczJNjK3MVWRHdVMELaN55wpJz8KKi4P"
 
 echo "============================================"
@@ -49,7 +49,7 @@ npx ts-node -e "
 import * as anchor from '@coral-xyz/anchor';
 import { PublicKey, SystemProgram, Keypair } from '@solana/web3.js';
 import * as fs from 'fs';
-import * as idlJson from './target/idl/nexum_pool.json';
+import * as idlJson from '../target/idl/nexum_pool.json';
 
 async function main() {
   const connection = new anchor.web3.Connection('$RPC', 'confirmed');

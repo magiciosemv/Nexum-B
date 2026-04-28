@@ -49,7 +49,7 @@ export async function initiateCommit(
   const currentSlot = await program.provider.connection.getSlot();
   const chainTime = await program.provider.connection.getBlockTime(currentSlot)
     ?? Math.floor(Date.now() / 1000);
-  const expiry = chainTime + params.expiry_seconds + 5; // +5s propagation buffer
+  const expiry = chainTime + params.expiry_seconds + 5; // +5s buffer (total must be 30-60s after TX latency)
   const { lo: transfer_lo, hi: transfer_hi } = splitAmount(params.transfer_amount);
 
   const commitment_hash = await computeCommitment({
