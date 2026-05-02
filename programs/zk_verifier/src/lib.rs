@@ -6,11 +6,14 @@ use vk::{VERIFYING_KEY, NR_PUBINPUTS};
 
 declare_id!("AytMjF35K8xDnrs7STj3keJzEvDvHGqJv2VQBQN3yfCi");
 
-/// Verify a Groth16 ZK proof for the balance_transition circuit.
+/// Verify a Groth16 ZK proof for the balance_transition_private circuit.
 ///
-/// Circuit has 7 public signals (circom order: outputs first, then public inputs):
-///   [0] pub_old_lo, [1] pub_old_hi, [2] pub_new_lo, [3] pub_new_hi,
-///   [4] pub_transfer_lo, [5] transfer_lo, [6] transfer_hi
+/// Circuit has 2 public inputs:
+///   [0] commitment_hash_lo (128-bit, lower half of SHA-256 commitment hash)
+///   [1] commitment_hash_hi (128-bit, upper half of SHA-256 commitment hash)
+///
+/// All balance/amount values are PRIVATE — no amounts leak on-chain.
+/// SHA-256 of the 120-byte commitment preimage is verified inside the circuit.
 ///
 /// Proof format (256 bytes, big-endian from snarkjs):
 ///   pi_a (G1): 64 bytes, pi_b (G2): 128 bytes, pi_c (G1): 64 bytes
@@ -25,29 +28,17 @@ pub mod zk_verifier {
     pub fn verify_proof(
         _ctx: Context<VerifyProof>,
         proof: [u8; 256],
-        transfer_lo: u32,
-        transfer_hi: u32,
-        old_lo: u32,
-        old_hi: u32,
-        new_lo: u32,
-        new_hi: u32,
+        commitment_hash_lo: u128,
+        commitment_hash_hi: u128,
     ) -> Result<()> {
         // ── Fast reject: trivial proof ──────────────────────────────────
         let non_trivial = proof.iter().any(|&b| b != 0);
         require!(non_trivial, ZkError::TrivialProof);
 
-        // ── Build public inputs (7 x 32 bytes, big-endian) ─────────────
-        // circom order: outputs first, then public inputs
-        // [0] pub_old_lo, [1] pub_old_hi, [2] pub_new_lo, [3] pub_new_hi,
-        // [4] pub_transfer_lo, [5] transfer_lo, [6] transfer_hi
+        // ── Build public inputs (2 x 32 bytes, big-endian) ─────────────
         let public_inputs: [[u8; 32]; NR_PUBINPUTS] = [
-            u32_to_be32(old_lo),       // [0] pub_old_lo
-            u32_to_be32(old_hi),       // [1] pub_old_hi
-            u32_to_be32(new_lo),       // [2] pub_new_lo
-            u32_to_be32(new_hi),       // [3] pub_new_hi
-            u32_to_be32(transfer_lo),  // [4] pub_transfer_lo
-            u32_to_be32(transfer_lo),  // [5] transfer_lo (public input)
-            u32_to_be32(transfer_hi),  // [6] transfer_hi (public input)
+            u128_to_be32(commitment_hash_lo),  // [0] lower 128 bits
+            u128_to_be32(commitment_hash_hi),  // [1] upper 128 bits
         ];
 
         // ── Negate proof_a ─────────────────────────────────────────────
@@ -80,10 +71,10 @@ pub mod zk_verifier {
     }
 }
 
-/// Convert u32 to 32-byte big-endian field element
-fn u32_to_be32(val: u32) -> [u8; 32] {
+/// Convert u128 to 32-byte big-endian field element
+fn u128_to_be32(val: u128) -> [u8; 32] {
     let mut buf = [0u8; 32];
-    buf[28..32].copy_from_slice(&val.to_be_bytes());
+    buf[16..32].copy_from_slice(&val.to_be_bytes());
     buf
 }
 

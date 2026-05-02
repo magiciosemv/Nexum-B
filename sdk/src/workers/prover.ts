@@ -1,13 +1,15 @@
 /**
  * prover.ts — Groth16 Proof Generation Manager
  *
- * Generates ZK proofs for the balance_transition circuit using snarkjs.
- * Can run in Node.js (main thread) or inside a Web Worker.
+ * Generates ZK proofs for the balance_transition_private circuit using snarkjs.
+ * All balance/amount values are PRIVATE. Only commitment_hash is public.
  *
- * Circuit: balance_transition.circom
- *   Public inputs:  transfer_lo, transfer_hi
- *   Private inputs: old_balance_lo, old_balance_hi, new_balance_lo, new_balance_hi
- *   Public outputs: pub_old_lo/hi, pub_new_lo/hi, pub_transfer_lo/hi
+ * Circuit: balance_transition_private.circom
+ *   Public inputs:  commitment_hash_lo, commitment_hash_hi (two 128-bit limbs)
+ *   Private inputs: old_balance_lo/hi, transfer_lo/hi, new_balance_lo/hi,
+ *                   nonce_bits[64], asset_a_mint_bytes[32], asset_b_mint_bytes[32],
+ *                   counterparty_bytes[32], expiry_bits[64]
+ *   Public outputs: none
  *
  * Proof format (256 bytes, matching on-chain zk_verifier):
  *   pi_a (G1): 64 bytes = A_x(32) + A_y(32)
@@ -18,22 +20,29 @@
 // ── Types ─────────────────────────────────────────────────────────────
 
 export interface CircuitInputs {
-  old_balance_lo: string;  // decimal string for BN254 field element
+  old_balance_lo: string;
   old_balance_hi: string;
   transfer_lo: string;
   transfer_hi: string;
   new_balance_lo: string;
   new_balance_hi: string;
+  nonce_bits: string[];
+  asset_a_mint_bytes: string[];
+  asset_b_mint_bytes: string[];
+  counterparty_bytes: string[];
+  expiry_bits: string[];
+  commitment_hash_lo: string;
+  commitment_hash_hi: string;
 }
 
 export interface Groth16Proof {
   proof_a: number[];      // 256 bytes
-  public_signals: string[]; // 7 public signals (transfer_lo, transfer_hi, + 5 outputs)
+  public_signals: string[]; // 2 public signals (commitment_hash_lo, commitment_hash_hi)
 }
 
 export interface ProverConfig {
-  wasmPath: string;  // URL or file path to balance_transition.wasm
-  zkeyPath: string;  // URL or file path to balance_transition_final.zkey
+  wasmPath: string;  // URL or file path to balance_transition_private.wasm
+  zkeyPath: string;  // URL or file path to balance_transition_private_final.zkey
 }
 
 // ── Proof serialization ──────────────────────────────────────────────
@@ -137,15 +146,23 @@ export class ProverManager {
     if (this.warmedUp) return;
     await this.init();
     try {
-      // Generate a trivial proof to trigger WASM loading
+      const warmupInputs = createPrivateCircuitInputs({
+        old_balance_lo: 0, old_balance_hi: 0,
+        transfer_lo: 0, transfer_hi: 0,
+        new_balance_lo: 0, new_balance_hi: 0,
+        nonce: 0n,
+        asset_a_mint: new Uint8Array(32),
+        asset_b_mint: new Uint8Array(32),
+        counterparty: new Uint8Array(32),
+        expiry: 0,
+      });
       await this.snarkjs.groth16.fullProve(
-        { old_balance_lo: "0", old_balance_hi: "0", transfer_lo: "0", transfer_hi: "0", new_balance_lo: "0", new_balance_hi: "0" },
+        warmupInputs,
         this.config.wasmPath,
         this.config.zkeyPath
       );
       this.warmedUp = true;
     } catch {
-      // Warmup proof may fail — that's fine, the WASM module is now loaded
       this.warmedUp = true;
     }
   }
@@ -248,8 +265,75 @@ function bytesToField(bytes: number[], offset: number): string {
   return value.toString();
 }
 
-// ── Convenience: create inputs from numeric values ───────────────────
+// ── Convenience: create inputs for the private circuit ────────────────
 
+/** Convert a u64/i64 value to an array of 64 bits (LSB-first). */
+function toBits64(val: bigint | number): string[] {
+  const v = BigInt(val);
+  return Array.from({ length: 64 }, (_, i) => String(Number((v >> BigInt(i)) & 1n)));
+}
+
+/** Split SHA-256 hash (32 bytes) into two 128-bit field elements. */
+export function splitHashToLimbs(hash: Uint8Array): { lo: bigint; hi: bigint } {
+  if (hash.length !== 32) throw new Error("Hash must be 32 bytes");
+  const hi = BigInt("0x" + Buffer.from(hash.subarray(0, 16)).toString("hex"));
+  const lo = BigInt("0x" + Buffer.from(hash.subarray(16, 32)).toString("hex"));
+  return { lo, hi };
+}
+
+export interface PrivateCircuitParams {
+  old_balance_lo: number;
+  old_balance_hi: number;
+  transfer_lo: number;
+  transfer_hi: number;
+  new_balance_lo: number;
+  new_balance_hi: number;
+  nonce: bigint;
+  asset_a_mint: Uint8Array;
+  asset_b_mint: Uint8Array;
+  counterparty: Uint8Array;
+  expiry: number;
+}
+
+export function createPrivateCircuitInputs(params: PrivateCircuitParams): CircuitInputs {
+  const { old_balance_lo, old_balance_hi, transfer_lo, transfer_hi,
+    new_balance_lo, new_balance_hi, nonce, asset_a_mint, asset_b_mint,
+    counterparty, expiry } = params;
+
+  // Build 120-byte preimage (same layout as computeCommitment)
+  const preimage = Buffer.alloc(120);
+  preimage.writeBigUInt64LE(nonce, 0);
+  preimage.writeUInt32LE(transfer_lo, 8);
+  preimage.writeUInt32LE(transfer_hi, 12);
+  preimage.set(asset_a_mint, 16);
+  preimage.set(asset_b_mint, 48);
+  preimage.set(counterparty, 80);
+  preimage.writeInt32LE(expiry & 0xFFFFFFFF, 112);
+  preimage.writeInt32LE(Math.floor(expiry / 0x100000000), 116);
+
+  // Compute SHA-256 commitment hash
+  const crypto = require("crypto");
+  const hash = crypto.createHash("sha256").update(preimage).digest();
+  const { lo: hashLo, hi: hashHi } = splitHashToLimbs(hash);
+
+  return {
+    old_balance_lo: String(old_balance_lo),
+    old_balance_hi: String(old_balance_hi),
+    transfer_lo: String(transfer_lo),
+    transfer_hi: String(transfer_hi),
+    new_balance_lo: String(new_balance_lo),
+    new_balance_hi: String(new_balance_hi),
+    nonce_bits: toBits64(nonce),
+    asset_a_mint_bytes: Array.from(asset_a_mint).map(String),
+    asset_b_mint_bytes: Array.from(asset_b_mint).map(String),
+    counterparty_bytes: Array.from(counterparty).map(String),
+    expiry_bits: toBits64(expiry),
+    commitment_hash_lo: hashLo.toString(),
+    commitment_hash_hi: hashHi.toString(),
+  };
+}
+
+/** @deprecated Use createPrivateCircuitInputs for Scheme B (private circuit) */
 export function createCircuitInputs(params: {
   old_balance_lo: number;
   old_balance_hi: number;
@@ -257,7 +341,7 @@ export function createCircuitInputs(params: {
   transfer_hi: number;
   new_balance_lo: number;
   new_balance_hi: number;
-}): CircuitInputs {
+}): { old_balance_lo: string; old_balance_hi: string; transfer_lo: string; transfer_hi: string; new_balance_lo: string; new_balance_hi: string } {
   return {
     old_balance_lo: String(params.old_balance_lo),
     old_balance_hi: String(params.old_balance_hi),

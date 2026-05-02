@@ -63,13 +63,42 @@ function serializeProofBrowser(
   return [...a_x, ...a_y, ...b_x_c1, ...b_x_c0, ...b_y_c1, ...b_y_c0, ...c_x, ...c_y];
 }
 
+/** Convert u64 value to 64-bit binary array (LSB-first) */
+function toBits64(val: bigint | number): string[] {
+  const v = BigInt(val);
+  return Array.from({ length: 64 }, (_, i) => String(Number((v >> BigInt(i)) & 1n)));
+}
+
 async function browserGenerateProof(inputs: {
   old_balance_lo: number; old_balance_hi: number;
   new_balance_lo: number; new_balance_hi: number;
   transfer_lo: number; transfer_hi: number;
+  nonce: bigint;
+  asset_a_mint: Uint8Array;
+  asset_b_mint: Uint8Array;
+  counterparty: Uint8Array;
+  expiry: number;
 }, wasmUrl: string, zkeyUrl: string): Promise<{ proofBytes: number[]; publicSignals: string[] }> {
   // Dynamic import — snarkjs is bundled by Vite, loaded as ESM
   const snarkjs = await import("snarkjs");
+
+  // Build commitment hash for public input
+  const preimage = new Uint8Array(120);
+  const dv = new DataView(preimage.buffer);
+  dv.setBigUint64(0, inputs.nonce, true);       // nonce LE
+  dv.setUint32(8, inputs.transfer_lo, true);     // transfer_lo LE
+  dv.setUint32(12, inputs.transfer_hi, true);    // transfer_hi LE
+  preimage.set(inputs.asset_a_mint, 16);
+  preimage.set(inputs.asset_b_mint, 48);
+  preimage.set(inputs.counterparty, 80);
+  dv.setInt32(112, inputs.expiry & 0xFFFFFFFF, true);
+  dv.setInt32(116, Math.floor(inputs.expiry / 0x100000000), true);
+
+  const hashBuf = await crypto.subtle.digest("SHA-256", preimage);
+  const hash = new Uint8Array(hashBuf);
+  const hashHi = BigInt("0x" + Array.from(hash.subarray(0, 16)).map(b => b.toString(16).padStart(2, "0")).join(""));
+  const hashLo = BigInt("0x" + Array.from(hash.subarray(16, 32)).map(b => b.toString(16).padStart(2, "0")).join(""));
+
   const circuitInputs = {
     old_balance_lo: String(inputs.old_balance_lo),
     old_balance_hi: String(inputs.old_balance_hi),
@@ -77,7 +106,15 @@ async function browserGenerateProof(inputs: {
     new_balance_hi: String(inputs.new_balance_hi),
     transfer_lo: String(inputs.transfer_lo),
     transfer_hi: String(inputs.transfer_hi),
+    nonce_bits: toBits64(inputs.nonce),
+    asset_a_mint_bytes: Array.from(inputs.asset_a_mint).map(String),
+    asset_b_mint_bytes: Array.from(inputs.asset_b_mint).map(String),
+    counterparty_bytes: Array.from(inputs.counterparty).map(String),
+    expiry_bits: toBits64(inputs.expiry),
+    commitment_hash_lo: hashLo.toString(),
+    commitment_hash_hi: hashHi.toString(),
   };
+
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(circuitInputs, wasmUrl, zkeyUrl);
   const proofBytes = serializeProofBrowser(proof.pi_a, proof.pi_b, proof.pi_c);
   return { proofBytes, publicSignals: publicSignals.map((s: any) => String(s)) };
@@ -392,31 +429,49 @@ export function useSchemeB(
       const tLo = Number(transfer_lo);
       const tHi = Number(transfer_hi);
 
-      // ── Phase 1: ZK Proof Generation ────────────────────────────────
-      log("Loading snarkjs WASM prover...");
-      const WASM_URL = "/circuits/balance_transition.wasm";
-      const ZKEY_URL = "/circuits/balance_transition_final.zkey";
+      // ── Phase 1: ZK Proof Generation (Private Circuit) ──────────────
+      log("Loading snarkjs WASM prover (private circuit, ~95K constraints)...");
+      const WASM_URL = "/circuits/balance_transition_private.wasm";
+      const ZKEY_URL = "/circuits/balance_transition_private_final.zkey";
+
+      // Fetch CommitSlot for commitment preimage data
+      const slotData = await (program.account as any).commitSlot.fetch(p.commitSlotId);
+      const slotNonce = BigInt((slotData.nonce as anchor.BN).toString());
+      const slotExpiry = (slotData.expiryInit as anchor.BN).toNumber();
+      const slotMintA = slotData.assetAMint as Uint8Array;
+      const slotMintB = slotData.assetBMint as Uint8Array;
+      const slotCounterparty = slotData.counterparty as Uint8Array;
+
+      const commitmentPreimage = {
+        nonce: slotNonce,
+        asset_a_mint: new Uint8Array(slotMintA),
+        asset_b_mint: new Uint8Array(slotMintB),
+        counterparty: new Uint8Array(slotCounterparty),
+        expiry: slotExpiry,
+      };
 
       log("Generating ElGamal encryption keys...");
       const keypairA = generateKeypair();
       const keypairB = generateKeypair();
       log("✓ ElGamal keypairs generated");
 
-      log("Generating ZK proof for Party A (sender)...");
+      log("Generating ZK proof for Party A (private circuit)...");
       const proofA = await browserGenerateProof({
         old_balance_lo: tLo, old_balance_hi: tHi,
         new_balance_lo: 0, new_balance_hi: 0,
         transfer_lo: tLo, transfer_hi: tHi,
+        ...commitmentPreimage,
       }, WASM_URL, ZKEY_URL);
-      log(`✓ Proof A: ${proofA.proofBytes.length} bytes`);
+      log(`✓ Proof A: ${proofA.proofBytes.length} bytes, public signals: ${proofA.publicSignals.length}`);
 
-      log("Generating ZK proof for Party B (receiver)...");
+      log("Generating ZK proof for Party B (private circuit)...");
       const proofB = await browserGenerateProof({
         old_balance_lo: tLo, old_balance_hi: tHi,
         new_balance_lo: 0, new_balance_hi: 0,
         transfer_lo: tLo, transfer_hi: tHi,
+        ...commitmentPreimage,
       }, WASM_URL, ZKEY_URL);
-      log(`✓ Proof B: ${proofB.proofBytes.length} bytes`);
+      log(`✓ Proof B: ${proofB.proofBytes.length} bytes, public signals: ${proofB.publicSignals.length}`);
 
       log("Encrypting balances with ElGamal...");
       // Party A: new=0 (sent), audit=transfer (old balance)
@@ -450,9 +505,7 @@ export function useSchemeB(
       // ── Phase 2: On-chain submission ────────────────────────────────
       setInitiatorState("SUBMITTING_EXECUTE");
 
-      // Fetch CommitSlot on-chain to get nonce + derive PDAs
-      const slotData = await (program.account as any).commitSlot.fetch(p.commitSlotId);
-      const slotNonce = BigInt((slotData.nonce as anchor.BN).toString());
+      // Derive PDAs from fetched slot data
       const [ledgerA] = findLedgerPDA(slotData.initiator, slotData.assetAMint, program.programId);
       const [ledgerB] = findLedgerPDA(slotData.counterparty, slotData.assetBMint, program.programId);
       const [configPda] = findConfigPDA(program.programId);
@@ -525,11 +578,9 @@ export function useSchemeB(
         program.methods
           .executeSettleB({
             nonce: new anchor.BN(slotNonce.toString()),
-            transferLo: transfer_lo,
-            transferHi: transfer_hi,
+            commitmentHashLo: new anchor.BN(proofA.publicSignals[0]),
+            commitmentHashHi: new anchor.BN(proofA.publicSignals[1]),
             settlementNonce: new anchor.BN(settlementNonce.toString()),
-            oldALo: tLo, oldAHi: tHi, newALo: 0, newAHi: 0,
-            oldBLo: tLo, oldBHi: tHi, newBLo: 0, newBHi: 0,
           })
           .preInstructions([
             ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),

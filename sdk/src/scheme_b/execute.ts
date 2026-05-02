@@ -1,22 +1,21 @@
 /**
- * executeSettle() — Scheme B Step 3
+ * executeSettle() — Scheme B Step 3 (Private Circuit)
  *
  * Three transactions:
  * 1. createProofData — creates ProofData PDA (nonce only, arrays zero-filled)
  * 2. writeProofData × 4 — writes proof/ciphertext chunks (256 or 512 bytes each)
- * 3. executeSettleB — verifies ZK proofs via CPI + commitment hash, applies balance updates
+ * 3. executeSettleB — verifies ZK proofs via CPI, commitment hash as public input
  *
- * Real ZK proofs and ElGamal ciphertexts are required.
- * Use buildProofData() to assemble ZKProofData from prover output + ElGamal encryption.
- *
- * ~220,000 CU total for execute_settle_b (plus ~300K for ZK CPI verification).
+ * All balance/amount values are PRIVATE in the ZK circuit.
+ * Only commitment_hash_lo/hi are public inputs to the proof.
  */
 
 import * as anchor from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram, ComputeBudgetProgram } from "@solana/web3.js";
 import { findLedgerPDA, findConfigPDA, findSettlementPDA, findProofDataPDA, splitAmount } from "./index";
 import { encrypt as elgamalEncrypt, serializeCiphertext, Point } from "../crypto/elgamal";
-import { Groth16Proof, createCircuitInputs } from "../workers/prover";
+import { Groth16Proof, createPrivateCircuitInputs, splitHashToLimbs } from "../workers/prover";
+import { computeCommitment } from "../crypto/commitment";
 
 // ── Proof data structure ─────────────────────────────────────────────
 
@@ -26,25 +25,22 @@ export interface ZKProofData {
   new_ct_hi: number[];     // 128 bytes new balance ciphertext high
   audit_ct_lo: number[];   // 128 bytes audit ciphertext low
   audit_ct_hi: number[];   // 128 bytes audit ciphertext high
-  // Public signals for on-chain ZK proof verification
-  old_lo: number;          // u32 old balance low limb
-  old_hi: number;          // u32 old balance high limb
-  new_lo: number;          // u32 new balance low limb
-  new_hi: number;          // u32 new balance high limb
+  commitment_hash_lo: bigint;  // 128-bit lower half of commitment hash
+  commitment_hash_hi: bigint;  // 128-bit upper half of commitment hash
 }
 
 export interface ExecuteParams {
   commit_slot_id: PublicKey;
   transfer_amount: bigint;
-  proof_a: ZKProofData;  // Party A's ZK proof + ciphertexts + public signals
-  proof_b: ZKProofData;  // Party B's ZK proof + ciphertexts + public signals
+  proof_a: ZKProofData;
+  proof_b: ZKProofData;
 }
 
 export interface ExecuteResult {
   settlement_id: PublicKey;
   proof_data_id: PublicKey;
   tx_create_proof: string;
-  txs_write_proof: string[];    // 0 or 4 transaction signatures
+  txs_write_proof: string[];
   tx_execute: string;
 }
 
@@ -101,33 +97,18 @@ export interface BuildProofDataParams {
 
 /**
  * Assemble a complete ZKProofData from a Groth16 proof and ElGamal encryption.
- *
- * This combines:
- * 1. The serialized 256-byte proof
- * 2. ElGamal encryption of the new balance (lo/hi limbs) under the recipient's public key
- * 3. Audit ciphertexts (same values encrypted, for audit trail)
- * 4. Public signals for on-chain ZK verification
- *
- * Usage:
- * ```ts
- * const proofData = buildProofData({
- *   proof: groth16Proof,
- *   encryptPublicKey: partyPublicKey,
- *   old_lo: 1000000, old_hi: 0,
- *   new_lo: 500000, new_hi: 0,
- * });
- * ```
  */
 export function buildProofData(params: BuildProofDataParams): ZKProofData {
   const { proof, encryptPublicKey, old_lo, old_hi, new_lo, new_hi } = params;
 
-  // Encrypt new balance lo/hi with recipient's public key
   const ct_lo = elgamalEncrypt(BigInt(new_lo), encryptPublicKey);
   const ct_hi = elgamalEncrypt(BigInt(new_hi), encryptPublicKey);
-
-  // Audit ciphertexts — encrypt old balance for audit trail
   const audit_lo = elgamalEncrypt(BigInt(old_lo), encryptPublicKey);
   const audit_hi = elgamalEncrypt(BigInt(old_hi), encryptPublicKey);
+
+  // Extract commitment hash from public signals
+  const hashLo = BigInt(proof.public_signals[0]);
+  const hashHi = BigInt(proof.public_signals[1]);
 
   return {
     proof: proof.proof_a,
@@ -135,10 +116,8 @@ export function buildProofData(params: BuildProofDataParams): ZKProofData {
     new_ct_hi: Array.from(serializeCiphertext(ct_hi)),
     audit_ct_lo: Array.from(serializeCiphertext(audit_lo)),
     audit_ct_hi: Array.from(serializeCiphertext(audit_hi)),
-    old_lo,
-    old_hi,
-    new_lo,
-    new_hi,
+    commitment_hash_lo: hashLo,
+    commitment_hash_hi: hashHi,
   };
 }
 
@@ -218,19 +197,9 @@ export async function executeSettle(
   const sig2 = await program.methods
     .executeSettleB({
       nonce: new anchor.BN(nonce.toString()),
-      transferLo: transfer_lo,
-      transferHi: transfer_hi,
+      commitmentHashLo: new anchor.BN(params.proof_a.commitment_hash_lo.toString()),
+      commitmentHashHi: new anchor.BN(params.proof_a.commitment_hash_hi.toString()),
       settlementNonce: new anchor.BN(settlementNonce.toString()),
-      // Party A public balance values (for ZK proof CPI)
-      oldALo: params.proof_a.old_lo,
-      oldAHi: params.proof_a.old_hi,
-      newALo: params.proof_a.new_lo,
-      newAHi: params.proof_a.new_hi,
-      // Party B public balance values (for ZK proof CPI)
-      oldBLo: params.proof_b.old_lo,
-      oldBHi: params.proof_b.old_hi,
-      newBLo: params.proof_b.new_lo,
-      newBHi: params.proof_b.new_hi,
     })
     .preInstructions([
       ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),

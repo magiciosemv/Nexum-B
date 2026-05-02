@@ -22,8 +22,7 @@ pub struct SettlementRecord {
     pub party_b: Pubkey,             // 32  Counterparty
     pub asset_a_mint: Pubkey,        // 32  Asset A mint
     pub asset_b_mint: Pubkey,        // 32  Asset B mint
-    pub transfer_lo: u32,            // 4   Transfer amount low 32 bits
-    pub transfer_hi: u32,            // 4   Transfer amount high 32 bits
+    pub commitment_hash: [u8; 32],   // 32  SHA-256 commitment hash (from CommitSlot)
     pub version_a: u64,              // 8   Ledger A version after settlement
     pub version_b: u64,              // 8   Ledger B version after settlement
     pub scheme: SettlementScheme,    // 1   Which scheme produced this record
@@ -37,12 +36,11 @@ impl SettlementRecord {
         + 32                  // party_b
         + 32                  // asset_a_mint
         + 32                  // asset_b_mint
-        + 4                   // transfer_lo
-        + 4                   // transfer_hi
+        + 32                  // commitment_hash
         + 8                   // version_a
         + 8                   // version_b
         + 1                   // scheme
         + 8                   // settled_at
         + 1;                  // bump
-        // Total: 130 bytes
+        // Total: 154 bytes
 }

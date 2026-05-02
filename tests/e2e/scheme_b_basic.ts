@@ -26,7 +26,7 @@ import {
   findProofDataPDA,
   splitAmount,
 } from "../../sdk/src/scheme_b/index";
-import { ProverManager, createCircuitInputs } from "../../sdk/src/workers/prover";
+import { ProverManager, createPrivateCircuitInputs } from "../../sdk/src/workers/prover";
 import {
   generateKeypair,
   encrypt as elgamalEncrypt,
@@ -77,8 +77,8 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
     // Initialize prover
     const projectRoot = path.resolve(__dirname, "../..");
     prover = new ProverManager({
-      wasmPath: path.join(projectRoot, "circuits/build/balance_transition_js/balance_transition.wasm"),
-      zkeyPath: path.join(projectRoot, "circuits/build/balance_transition_final.zkey"),
+      wasmPath: path.join(projectRoot, "circuits/build_private/balance_transition_private_js/balance_transition_private.wasm"),
+      zkeyPath: path.join(projectRoot, "circuits/build_private/balance_transition_private_final.zkey"),
     });
     await prover.init();
 
@@ -190,31 +190,45 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
     assert.exists(slot.executeExpiry);
   });
 
-  it("Step 3: Execute settlement with real ZK proofs", async () => {
+  it("Step 3: Execute settlement with real ZK proofs (private circuit)", async () => {
     const { lo: transfer_lo, hi: transfer_hi } = splitAmount(transferAmount);
 
-    // ── Generate real Groth16 proofs ──────────────────────────────────
-    // Party A (sender): A_old=1000000, A_new=0, transfer=1000000
-    // Circuit proves: A_old = A_new + transfer → 1000000 = 0 + 1000000
-    const proofA = await prover.generateProof(createCircuitInputs({
+    // ── Fetch CommitSlot for commitment preimage data ────────────────
+    const slotInfo = await program.account.commitSlot.fetch(commitSlotPda);
+    const slotNonce = BigInt((slotInfo.nonce as any).toString());
+    const slotExpiry = (slotInfo.expiryInit as any).toNumber();
+    const slotMintA = new Uint8Array(slotInfo.assetAMint.toBytes().subarray(0, 32));
+    const slotMintB = new Uint8Array(slotInfo.assetBMint.toBytes().subarray(0, 32));
+    const slotCounterparty = new Uint8Array(slotInfo.counterparty.toBytes().subarray(0, 32));
+
+    const preimage = {
+      nonce: slotNonce,
+      asset_a_mint: slotMintA,
+      asset_b_mint: slotMintB,
+      counterparty: slotCounterparty,
+      expiry: slotExpiry,
+    };
+
+    // ── Generate real Groth16 proofs (private circuit) ──────────────
+    // All amounts are PRIVATE. Only commitment_hash is public.
+    const proofA = await prover.generateProof(createPrivateCircuitInputs({
       old_balance_lo: 1000000,
       old_balance_hi: 0,
       new_balance_lo: 0,
       new_balance_hi: 0,
       transfer_lo: Number(transfer_lo),
       transfer_hi: Number(transfer_hi),
+      ...preimage,
     }));
 
-    // Party B (receiver): B_old=0, B_new=1000000
-    // Circuit: old=B_new=1000000, new=B_old=0, transfer=1000000
-    // Proves: 1000000 = 0 + 1000000
-    const proofB = await prover.generateProof(createCircuitInputs({
+    const proofB = await prover.generateProof(createPrivateCircuitInputs({
       old_balance_lo: 1000000,  // B's new balance (circuit "old")
       old_balance_hi: 0,
       new_balance_lo: 0,        // B's old balance (circuit "new")
       new_balance_hi: 0,
       transfer_lo: Number(transfer_lo),
       transfer_hi: Number(transfer_hi),
+      ...preimage,
     }));
 
     // ── ElGamal encrypt new balances ──────────────────────────────────
@@ -283,19 +297,9 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
     await program.methods
       .executeSettleB({
         nonce: new anchor.BN(nonce.toString()),
-        transferLo: transfer_lo,
-        transferHi: transfer_hi,
+        commitmentHashLo: new anchor.BN(proofA.public_signals[0]),
+        commitmentHashHi: new anchor.BN(proofA.public_signals[1]),
         settlementNonce: new anchor.BN(settlementNonce.toString()),
-        // Party A public balance values (sender: old=1000000, new=0)
-        oldALo: 1000000,
-        oldAHi: 0,
-        newALo: 0,
-        newAHi: 0,
-        // Party B public balance values (receiver: circuit old=B_new=1000000, circuit new=B_old=0)
-        oldBLo: 1000000,
-        oldBHi: 0,
-        newBLo: 0,
-        newBHi: 0,
       })
       .preInstructions([
         ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
@@ -315,8 +319,15 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
 
     // ── Verify settlement ─────────────────────────────────────────────
     const record = await program.account.settlementRecord.fetch(settlementPda);
-    assert.equal(record.transferLo, transfer_lo);
-    assert.equal(record.transferHi, transfer_hi);
+    // Verify commitment_hash is stored (not plaintext amounts)
+    const storedHash = Buffer.from((record as any).commitmentHash).toString('hex');
+    // Reconstruct expected hash from proof public signals
+    const hashLo = BigInt(proofA.public_signals[0]);
+    const hashHi = BigInt(proofA.public_signals[1]);
+    const loHex = hashLo.toString(16).padStart(32, '0');
+    const hiHex = hashHi.toString(16).padStart(32, '0');
+    const expectedHash = hiHex + loHex;
+    assert.equal(storedHash, expectedHash, "SettlementRecord commitment_hash must match ZK proof public input");
     assert.deepEqual(record.scheme, { schemeB: {} });
 
     // Verify both ledgers are back to Active

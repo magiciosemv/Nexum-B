@@ -41,8 +41,7 @@ interface SettlementRecordData {
   partyB: string;
   assetAMint: string;
   assetBMint: string;
-  transferLo: number;
-  transferHi: number;
+  commitmentHash: string;     // hex-encoded SHA-256 commitment hash
   versionA: number;
   versionB: number;
   scheme: number;           // 0 = SchemeA, 1 = SchemeB
@@ -93,6 +92,11 @@ function schemeLabel(idx: number): string {
 function computeAmount(lo: number, hi: number): string {
   const total = BigInt(lo) + (BigInt(hi) << BigInt(32));
   return total.toString();
+}
+
+/** Convert a Uint8Array (or number[]) to hex string. */
+function bytesToHex(bytes: Uint8Array | number[] | Buffer): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** Truncate a base58 address for display. */
@@ -190,8 +194,6 @@ function RevealedRecord({ address, record, t }: {
   record: SettlementRecordData;
   t: TranslateFn;
 }) {
-  const amount = computeAmount(record.transferLo, record.transferHi);
-
   return (
     <div style={{ padding: '28px 32px', border: '1px solid var(--green)', background: 'rgba(31,111,62,.06)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 18 }}>
@@ -201,9 +203,18 @@ function RevealedRecord({ address, record, t }: {
         <span className="mono" style={{ fontSize: 9, letterSpacing: '.18em', color: '#5a5a63' }}>FORENSIC SNAPSHOT</span>
       </div>
 
-      {/* Large amount display */}
-      <div className="serif" style={{ fontStyle: 'italic', fontSize: 48, fontWeight: 300, color: '#f4f1ea', letterSpacing: '-.025em', lineHeight: 1.05, marginBottom: 24 }}>
-        {amount} <span style={{ color: 'var(--accent)' }}>{t('\u5355\u4F4D', 'units')}</span>
+      {/* Commitment hash display — only on-chain amount evidence */}
+      <div style={{ marginBottom: 24 }}>
+        <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: '#5a5a63', marginBottom: 6 }}>COMMITMENT HASH (SHA-256)</div>
+        <div className="mono" style={{ fontSize: 14, color: '#f4f1ea', wordBreak: 'break-all', letterSpacing: '.04em', padding: '12px 16px', background: 'var(--d-bg)', border: '1px solid var(--d-line-2)' }}>
+          {record.commitmentHash}
+        </div>
+        <div style={{ marginTop: 8, padding: '8px 12px', border: '1px dashed var(--d-line-2)', fontSize: 11, color: '#9a9aa3', lineHeight: 1.5 }}>
+          {t(
+            'Transfer amounts are private. Only the irreversible SHA-256 commitment hash is stored on-chain.',
+            'Transfer amounts are private. Only the irreversible SHA-256 commitment hash is stored on-chain.'
+          )}
+        </div>
       </div>
 
       {/* Field grid */}
@@ -214,11 +225,8 @@ function RevealedRecord({ address, record, t }: {
         <Field label={t('\u8D44\u4EA7 B (asset_b_mint)', 'ASSET B MINT') as string} value={truncate(record.assetBMint, 12, 6)} />
         <Field label={t('\u7ED3\u7B97\u65F6\u95F4 (settled_at)', 'SETTLED AT \u00B7 UTC') as string} value={formatEpoch(record.settledAt)} />
         <Field label="SCHEME" value={schemeLabel(record.scheme)} />
-        <Field label="TRANSFER_LO (u32)" value={record.transferLo.toString()} />
-        <Field label="TRANSFER_HI (u32)" value={record.transferHi.toString()} />
         <Field label="VERSION A" value={record.versionA.toString()} />
         <Field label="VERSION B" value={record.versionB.toString()} />
-        <Field label="AMOUNT (lo + hi << 32)" value={amount} />
         <Field label="BUMP" value={record.bump.toString()} />
       </div>
 
@@ -288,8 +296,7 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
         partyB: info.partyB.toBase58(),
         assetAMint: info.assetAMint.toBase58(),
         assetBMint: info.assetBMint.toBase58(),
-        transferLo: bnToNum(info.transferLo),
-        transferHi: bnToNum(info.transferHi),
+        commitmentHash: bytesToHex(info.commitmentHash),
         versionA: bnToNum(info.versionA),
         versionB: bnToNum(info.versionB),
         scheme: schemeEnumToIndex(info.scheme),
@@ -329,7 +336,7 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
       address: fetchedAddr,
       ...record,
       scheme: schemeLabel(record.scheme),
-      amount: computeAmount(record.transferLo, record.transferHi),
+      privacyNote: 'Transfer amounts are private. Only the commitment hash is stored on-chain.',
       settledAtISO: formatEpoch(record.settledAt),
     }, null, 2)], { type: 'application/json' });
 
