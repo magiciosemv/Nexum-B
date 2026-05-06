@@ -170,6 +170,7 @@ export interface SchemeBState {
   executeSettlement: () => Promise<void>;
   cancelInitiate: () => Promise<void>;
   cancelMutual: () => Promise<void>;
+  forceCancel: () => Promise<void>;
   error: string | null;
 }
 
@@ -438,9 +439,9 @@ export function useSchemeB(
       const slotData = await (program.account as any).commitSlot.fetch(p.commitSlotId);
       const slotNonce = BigInt((slotData.nonce as anchor.BN).toString());
       const slotExpiry = (slotData.expiryInit as anchor.BN).toNumber();
-      const slotMintA = slotData.assetAMint as Uint8Array;
-      const slotMintB = slotData.assetBMint as Uint8Array;
-      const slotCounterparty = slotData.counterparty as Uint8Array;
+      const slotMintA = (slotData.assetAMint as any).toBytes ? (slotData.assetAMint as any).toBytes() : new Uint8Array(slotData.assetAMint as Uint8Array);
+      const slotMintB = (slotData.assetBMint as any).toBytes ? (slotData.assetBMint as any).toBytes() : new Uint8Array(slotData.assetBMint as Uint8Array);
+      const slotCounterparty = (slotData.counterparty as any).toBytes ? (slotData.counterparty as any).toBytes() : new Uint8Array(slotData.counterparty as Uint8Array);
 
       const commitmentPreimage = {
         nonce: slotNonce,

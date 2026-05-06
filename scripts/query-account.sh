@@ -58,9 +58,19 @@ const addr = "'"$ADDR"'";
     } else if (info.data.length >= 1530 && info.data.length <= 1540) {
       console.log("=== ProofData ===");
       console.log("Data (first 64B):", Buffer.from(info.data.slice(0, 64)).toString("hex"));
-    } else if (info.data.length >= 126 && info.data.length <= 135) {
+    } else if (info.data.length >= 148 && info.data.length <= 162) {
       console.log("=== SettlementRecord ===");
-      console.log("Data (hex):", Buffer.from(info.data).toString("hex"));
+      const schemeNames = ["SchemeA", "SchemeB"];
+      console.log("Party A (offset 8):", new PublicKey(info.data.slice(8, 40)).toBase58());
+      console.log("Party B (offset 40):", new PublicKey(info.data.slice(40, 72)).toBase58());
+      console.log("Asset A Mint (offset 72):", new PublicKey(info.data.slice(72, 104)).toBase58());
+      console.log("Asset B Mint (offset 104):", new PublicKey(info.data.slice(104, 136)).toBase58());
+      console.log("Commitment Hash (offset 136-168):", Buffer.from(info.data.slice(136, 168)).toString("hex"));
+      console.log("Version A (offset 168):", info.data.readBigUInt64LE(168).toString());
+      console.log("Version B (offset 176):", info.data.readBigUInt64LE(176).toString());
+      console.log("Scheme (offset 184):", schemeNames[info.data[184]] || "Unknown(" + info.data[184] + ")");
+      console.log("Settled At (offset 185):", Number(info.data.readBigInt64LE(185)));
+      console.log("Bump (offset 193):", info.data[193]);
     } else {
       console.log("=== Unknown nexum_pool account (" + info.data.length + "B) ===");
     }

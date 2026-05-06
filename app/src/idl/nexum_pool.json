@@ -1722,7 +1722,7 @@
       "docs": [
         "Params for execute_settle_b.",
         "Large proof/ciphertext arrays come from the ProofData account to avoid BPF stack overflow.",
-        "Public balance values are passed here for ZK proof CPI verification."
+        "Only commitment hash limbs are passed — all balance/amount values are private in the ZK circuit."
       ],
       "type": {
         "kind": "struct",
@@ -1732,48 +1732,16 @@
             "type": "u64"
           },
           {
-            "name": "transfer_lo",
-            "type": "u32"
+            "name": "commitment_hash_lo",
+            "type": "u128"
           },
           {
-            "name": "transfer_hi",
-            "type": "u32"
+            "name": "commitment_hash_hi",
+            "type": "u128"
           },
           {
             "name": "settlement_nonce",
             "type": "u64"
-          },
-          {
-            "name": "old_a_lo",
-            "type": "u32"
-          },
-          {
-            "name": "old_a_hi",
-            "type": "u32"
-          },
-          {
-            "name": "new_a_lo",
-            "type": "u32"
-          },
-          {
-            "name": "new_a_hi",
-            "type": "u32"
-          },
-          {
-            "name": "old_b_lo",
-            "type": "u32"
-          },
-          {
-            "name": "old_b_hi",
-            "type": "u32"
-          },
-          {
-            "name": "new_b_lo",
-            "type": "u32"
-          },
-          {
-            "name": "new_b_hi",
-            "type": "u32"
           }
         ]
       }

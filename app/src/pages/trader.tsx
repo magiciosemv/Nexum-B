@@ -564,7 +564,7 @@ export default function TraderTerminal({ lang, setLang }: TraderTerminalProps) {
   // ── Local form state ────────────────────────────────────────────────
   const [amount, setAmount] = useState("1000000");
   const [mintA, setMintA] = useState("B31JoQhMFF2TrSJMdiSqCRGMj4jR8TD8sNzNGn4T4qQw");
-  const [mintB, setMintB] = useState("Pxm31BeJ9rKsHVjrRedNZse4qTxKpFzG8v2NE87JP6k");
+  const [mintB, setMintB] = useState("B31JoQhMFF2TrSJMdiSqCRGMj4jR8TD8sNzNGn4T4qQw");
   const [counterparty, setCounterparty] = useState("");
   const [expiry, setExpiry] = useState(55);
 
@@ -751,7 +751,7 @@ export default function TraderTerminal({ lang, setLang }: TraderTerminalProps) {
               value={mintB}
               onChange={(e) => setMintB(e.target.value)}
               disabled={isRunning}
-              placeholder="Pxm31BeJ9rKsHVjrRedNZse4qTxKpFzG8v2NE87JP6k"
+              placeholder="B31JoQhMFF2TrSJMdiSqCRGMj4jR8TD8sNzNGn4T4qQw"
               style={inpStyle}
             />
           </FormField>
