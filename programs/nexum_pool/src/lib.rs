@@ -12,7 +12,7 @@ pub use utils::*;
 
 use anchor_lang::prelude::*;
 
-declare_id!("BN9cg69CyigYuczJNjK3MVWRHdVMELaN55wpJz8KKi4P");
+declare_id!("BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP");
 
 #[program]
 pub mod nexum_pool {

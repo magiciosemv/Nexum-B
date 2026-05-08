@@ -30,7 +30,7 @@ const ENDPOINT =
   "http://127.0.0.1:8899";
 
 // Program IDs (must match Anchor.toml and deployed programs)
-const NEXUM_POOL_ID = new PublicKey("BN9cg69CyigYuczJNjK3MVWRHdVMELaN55wpJz8KKi4P");
+const NEXUM_POOL_ID = new PublicKey("BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP");
 
 // ── Context Types ─────────────────────────────────────────────────────
 

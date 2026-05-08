@@ -22,7 +22,7 @@ interface RegulatorChamberProps {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const PROGRAM_ID = new PublicKey('BN9cg69CyigYuczJNjK3MVWRHdVMELaN55wpJz8KKi4P');
+const PROGRAM_ID = new PublicKey('BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP');
 
 /** Known devnet SettlementRecord addresses for the sample-ID panel. */
 const SAMPLE_SETTLEMENT_IDS = [

@@ -1,5 +1,5 @@
 {
-  "address": "BN9cg69CyigYuczJNjK3MVWRHdVMELaN55wpJz8KKi4P",
+  "address": "BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP",
   "metadata": {
     "name": "nexum_pool",
     "version": "0.1.0",
@@ -1772,12 +1772,13 @@
             "type": "pubkey"
           },
           {
-            "name": "transfer_lo",
-            "type": "u32"
-          },
-          {
-            "name": "transfer_hi",
-            "type": "u32"
+            "name": "commitment_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
           },
           {
             "name": "version_a",

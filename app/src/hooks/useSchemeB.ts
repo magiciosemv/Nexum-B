@@ -176,7 +176,7 @@ export interface SchemeBState {
 
 // ── ZK Verifier program ID ───────────────────────────────────────────
 
-const ZK_VERIFIER_ID = new PublicKey("AytMjF35K8xDnrs7STj3keJzEvDvHGqJv2VQBQN3yfCi");
+const ZK_VERIFIER_ID = new PublicKey("6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN");
 
 // ── Hook Implementation ─────────────────────────────────────────────
 
@@ -240,6 +240,25 @@ export function useSchemeB(
       const mintAPubkey = assetAMint
         ? new PublicKey(assetAMint)
         : new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+
+      // ── Ensure Ledger A exists ────────────────────────────────────
+      const [ledgerA] = findLedgerPDA(wallet.publicKey, mintAPubkey, program.programId);
+      const ledgerInfo = await program.provider.connection.getAccountInfo(ledgerA);
+      if (!ledgerInfo) {
+        log("Creating Ledger A (first time for this mint)...");
+        const [configPda] = findConfigPDA(program.programId);
+        await program.methods
+          .createUserLedger()
+          .accounts({
+            owner: wallet.publicKey,
+            ledger: ledgerA,
+            mint: mintAPubkey,
+            config: configPda,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+        log("✓ Ledger A created");
+      }
 
       setInitiatorState("SUBMITTING_INITIATE");
       log("Submitting initiate_commit...");

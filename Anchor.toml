@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-nexum_pool = "BN9cg69CyigYuczJNjK3MVWRHdVMELaN55wpJz8KKi4P"
+nexum_pool = "BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP"
 
 [registry]
 url = "https://api.apr.dev"
@@ -17,3 +17,5 @@ wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+
+[hooks]

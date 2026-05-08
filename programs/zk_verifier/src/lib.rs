@@ -4,7 +4,7 @@ use groth16_solana::groth16::Groth16Verifier;
 pub mod vk;
 use vk::{VERIFYING_KEY, NR_PUBINPUTS};
 
-declare_id!("AytMjF35K8xDnrs7STj3keJzEvDvHGqJv2VQBQN3yfCi");
+declare_id!("6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN");
 
 /// Verify a Groth16 ZK proof for the balance_transition_private circuit.
 ///

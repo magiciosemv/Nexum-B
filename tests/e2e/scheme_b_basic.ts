@@ -34,7 +34,7 @@ import {
 } from "../../sdk/src/crypto/elgamal";
 import path from "path";
 
-const ZK_VERIFIER_ID = new PublicKey("AytMjF35K8xDnrs7STj3keJzEvDvHGqJv2VQBQN3yfCi");
+const ZK_VERIFIER_ID = new PublicKey("6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN");
 
 describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
   const provider = anchor.AnchorProvider.env();

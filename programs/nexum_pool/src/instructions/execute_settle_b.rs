@@ -3,8 +3,8 @@ use anchor_lang::solana_program::{instruction::Instruction, program::invoke, pub
 use crate::state::*;
 use crate::errors::NexumError;
 
-/// zk_verifier program ID — matches AytMjF35K8xDnrs7STj3keJzEvDvHGqJv2VQBQN3yfCi
-const ZK_VERIFIER_ID: &str = "AytMjF35K8xDnrs7STj3keJzEvDvHGqJv2VQBQN3yfCi";
+/// zk_verifier program ID — matches 6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN
+const ZK_VERIFIER_ID: &str = "6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN";
 
 /// Params for execute_settle_b.
 /// Large proof/ciphertext arrays come from the ProofData account to avoid BPF stack overflow.

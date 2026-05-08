@@ -213,7 +213,7 @@ export async function executeSettle(
       config: configPda,
       feePayer: wallet.publicKey,
       systemProgram: SystemProgram.programId,
-      zkVerifierProgram: new PublicKey("AytMjF35K8xDnrs7STj3keJzEvDvHGqJv2VQBQN3yfCi"),
+      zkVerifierProgram: new PublicKey("6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN"),
     })
     .rpc({ commitment: "confirmed" });
 
