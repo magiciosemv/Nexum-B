@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import { PublicKey } from '@solana/web3.js';
 import { NexumSeal, Wordmark, Slot } from '../components/atoms';
 import { useAnchorContext } from '../context/WalletProvider';
+import { deserializeCiphertext, elgamalDecryptU32 as decryptU32, findLedgerPDA } from '@nexum/sdk';
 
 // ── Props ──────────────────────────────────────────────────────────────────
 
@@ -32,7 +33,7 @@ const SAMPLE_SETTLEMENT_IDS = [
 
 // ── Phase State ────────────────────────────────────────────────────────────
 
-type Phase = 'input' | 'searching' | 'revealed' | 'error';
+type Phase = 'input' | 'searching' | 'demandKey' | 'unsealing' | 'revealed' | 'error';
 
 // ── On-chain record type (camelCase from Anchor TS SDK) ───────────────────
 
@@ -56,6 +57,12 @@ interface AuditEntry {
   action: string;           // "query" | "export"
   ref: string;              // settlement address or "json"
   auditor: string;          // wallet pubkey truncated
+}
+
+/** Decrypted balance data from ElGamal ciphertexts. */
+interface DecryptedBalances {
+  partyA: { lo: number; hi: number; balance: bigint };
+  partyB: { lo: number; hi: number; balance: bigint };
 }
 
 // ── Translation function type ──────────────────────────────────────────────
@@ -123,10 +130,12 @@ function StepMachine({ phase }: { phase: Phase }) {
     { key: 'revealed', label: 'III \u00B7 REVEAL' },
   ];
 
-  // Map our 4-phase model to the 5-step visual
+  // Map our phase model to the 5-step visual
   const phaseToStep: Record<Phase, number> = {
     input: 0,
     searching: 1,
+    demandKey: 2,
+    unsealing: 3,
     revealed: 4,
     error: 0,
   };
@@ -189,10 +198,11 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 /** Revealed record -- all decoded SettlementRecord fields. */
-function RevealedRecord({ address, record, t }: {
+function RevealedRecord({ address, record, t, decryptedBalances }: {
   address: string;
   record: SettlementRecordData;
   t: TranslateFn;
+  decryptedBalances: DecryptedBalances | null;
 }) {
   return (
     <div style={{ padding: '28px 32px', border: '1px solid var(--green)', background: 'rgba(31,111,62,.06)' }}>
@@ -229,6 +239,30 @@ function RevealedRecord({ address, record, t }: {
         <Field label="VERSION B" value={record.versionB.toString()} />
         <Field label="BUMP" value={record.bump.toString()} />
       </div>
+
+      {/* Decrypted balances */}
+      {decryptedBalances && (
+        <div style={{ marginTop: 20, padding: '20px 24px', border: '1px solid var(--gold)', background: 'rgba(198,166,82,.06)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 14 }}>
+            <span className="mono" style={{ fontSize: 10, letterSpacing: '.22em', color: 'var(--gold)' }}>
+              {'🔓 DECRYPTED BALANCES'}
+            </span>
+            <span className="mono" style={{ fontSize: 9, letterSpacing: '.18em', color: '#5a5a63' }}>ELGAMAL DECRYPTED</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'var(--d-line)', border: '1px solid var(--d-line-2)' }}>
+            <div style={{ padding: '14px 18px', background: 'var(--d-bg)' }}>
+              <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: '#5a5a63', marginBottom: 5 }}>PARTY A BALANCE</div>
+              <div className="mono" style={{ fontSize: 18, color: 'var(--gold)', fontWeight: 600 }}>{decryptedBalances.partyA.balance.toString()}</div>
+              <div className="mono" style={{ fontSize: 9, color: '#5a5a63', marginTop: 3 }}>lo={decryptedBalances.partyA.lo} · hi={decryptedBalances.partyA.hi}</div>
+            </div>
+            <div style={{ padding: '14px 18px', background: 'var(--d-bg)' }}>
+              <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: '#5a5a63', marginBottom: 5 }}>PARTY B BALANCE</div>
+              <div className="mono" style={{ fontSize: 18, color: 'var(--gold)', fontWeight: 600 }}>{decryptedBalances.partyB.balance.toString()}</div>
+              <div className="mono" style={{ fontSize: 9, color: '#5a5a63', marginTop: 3 }}>lo={decryptedBalances.partyB.lo} · hi={decryptedBalances.partyB.hi}</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Full address */}
       <div style={{ marginTop: 14, padding: '10px 14px', border: '1px dashed var(--d-line-2)' }}>
@@ -279,6 +313,11 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
   const [errorMsg, setErrorMsg] = useState('');
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
 
+  // Decryption state
+  const [privateKeyInput, setPrivateKeyInput] = useState('');
+  const [decryptedBalances, setDecryptedBalances] = useState<DecryptedBalances | null>(null);
+  const [decryptError, setDecryptError] = useState('');
+
   // ── Fetch Settlement Record ────────────────────────────────────────────
 
   const fetchRecord = useCallback(async (address: string) => {
@@ -306,7 +345,7 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
 
       setRecord(rec);
       setFetchedAddr(address.trim());
-      setPhase('revealed');
+      setPhase('demandKey');
 
       // Append to audit log
       setAuditLog(prev => [{
@@ -326,6 +365,69 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
       setRecord(null);
     }
   }, [program, publicKey, lang]);
+
+  // \u2500\u2500 Unseal: Decrypt ElGamal ciphertexts with provided private key \u2500\u2500\u2500
+
+  const unseal = useCallback(async () => {
+    if (!program || !record) return;
+
+    setDecryptError('');
+    setPhase('unsealing');
+
+    try {
+      // Parse private key
+      const sk = BigInt(privateKeyInput.trim());
+      if (sk <= 0n) throw new Error('Private key must be a positive integer');
+
+      const partyA = new PublicKey(record.partyA);
+      const partyB = new PublicKey(record.partyB);
+      const mintA = new PublicKey(record.assetAMint);
+      const mintB = new PublicKey(record.assetBMint);
+
+      // Derive ledger PDAs
+      const [ledgerAAddr] = findLedgerPDA(partyA, mintA, program.programId);
+      const [ledgerBAddr] = findLedgerPDA(partyB, mintB, program.programId);
+
+      // Fetch both ledgers
+      const [ledgerAInfo, ledgerBInfo] = await Promise.all([
+        (program.account as any).userLedger.fetch(ledgerAAddr),
+        (program.account as any).userLedger.fetch(ledgerBAddr),
+      ]);
+
+      // Decrypt Party A balance
+      const aCtLo = deserializeCiphertext(new Uint8Array(ledgerAInfo.balanceCtLo));
+      const aCtHi = deserializeCiphertext(new Uint8Array(ledgerAInfo.balanceCtHi));
+      const aLo = decryptU32(aCtLo, sk);
+      const aHi = decryptU32(aCtHi, sk);
+      const balanceA = (BigInt(aHi) << 32n) | BigInt(aLo);
+
+      // Decrypt Party B balance
+      const bCtLo = deserializeCiphertext(new Uint8Array(ledgerBInfo.balanceCtLo));
+      const bCtHi = deserializeCiphertext(new Uint8Array(ledgerBInfo.balanceCtHi));
+      const bLo = decryptU32(bCtLo, sk);
+      const bHi = decryptU32(bCtHi, sk);
+      const balanceB = (BigInt(bHi) << 32n) | BigInt(bLo);
+
+      setDecryptedBalances({
+        partyA: { lo: aLo, hi: aHi, balance: balanceA },
+        partyB: { lo: bLo, hi: bHi, balance: balanceB },
+      });
+
+      setPhase('revealed');
+
+      // Log decryption action
+      setAuditLog(prev => [{
+        ts: new Date().toISOString(),
+        action: 'decrypt',
+        ref: truncate(fetchedAddr, 12, 6),
+        auditor: publicKey ? truncate(publicKey.toBase58(), 6, 4) : 'unknown',
+      }, ...prev]);
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      setDecryptError(msg.slice(0, 200));
+      setPhase('demandKey');
+    }
+  }, [program, record, privateKeyInput, fetchedAddr, publicKey]);
 
   // ── Export JSON ────────────────────────────────────────────────────────
 
@@ -364,6 +466,9 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
     setFetchedAddr('');
     setPhase('input');
     setErrorMsg('');
+    setPrivateKeyInput('');
+    setDecryptedBalances(null);
+    setDecryptError('');
   }, []);
 
   // ── Suggestion click ───────────────────────────────────────────────────
@@ -514,11 +619,90 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
             </div>
           )}
 
+
+          {/* ── Phase: Demand Key ──────────────────────────────────── */}
+          {phase === 'demandKey' && record && (
+            <div style={{ marginTop: 32, padding: '28px 32px', border: '1px solid var(--gold)', background: 'rgba(198,166,82,.06)' }}>
+              <div className="mono" style={{ fontSize: 10, letterSpacing: '.22em', color: 'var(--gold)', marginBottom: 16 }}>
+                II · DEMAND KEY · ELGAMAL PRIVATE KEY REQUIRED
+              </div>
+
+              <div style={{ marginBottom: 18, padding: '12px 16px', border: '1px dashed var(--d-line-2)', fontSize: 12, color: '#9a9aa3', lineHeight: 1.6 }}>
+                {t(
+                  '链上存储的是 ElGamal 密文。要解密余额，需要提供加密时使用的私钥（bigint 十进制字符串）。每个结算使用独立的临时密钥对。',
+                  'On-chain balances are ElGamal ciphertexts. To decrypt, provide the private key used during encryption (bigint decimal string). Each settlement uses an ephemeral keypair.'
+                )}
+              </div>
+
+              <RecordHeader address={fetchedAddr} record={record} phase={phase} />
+
+              <div style={{ marginTop: 20 }}>
+                <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: '#5a5a63', marginBottom: 6 }}>
+                  ELGAMAL PRIVATE KEY (BIGINT DECIMAL)
+                </div>
+                <input
+                  value={privateKeyInput}
+                  onChange={e => setPrivateKeyInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && privateKeyInput.trim()) unseal(); }}
+                  placeholder="12345678901234567890..."
+                  type="password"
+                  style={{
+                    width: '100%',
+                    background: 'var(--d-bg-3)',
+                    border: '1px solid var(--d-line-2)',
+                    color: '#f4f1ea',
+                    padding: '14px 16px',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: 14,
+                    letterSpacing: '.05em',
+                    outline: 'none',
+                    marginBottom: 14,
+                  }}
+                />
+
+                {decryptError && (
+                  <div className="mono" style={{ fontSize: 11, color: 'var(--danger)', padding: '10px 12px', border: '1px solid var(--danger)', background: 'rgba(181,61,32,.08)', marginBottom: 14, whiteSpace: 'pre-line' }}>
+                    ! {decryptError}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={unseal}
+                    disabled={!privateKeyInput.trim()}
+                    className="btn solid"
+                    style={{ borderColor: 'var(--gold)', background: 'var(--gold)', color: 'var(--d-bg)' }}
+                  >
+                    {t('🔓 解密余额', '🔓 UNSEAL BALANCES')}
+                  </button>
+                  <button onClick={reset} className="btn" style={{ borderColor: '#f4f1ea', color: '#f4f1ea' }}>
+                    {'←'} {t('取消', 'CANCEL')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Phase: Unsealing ──────────────────────────────────── */}
+          {phase === 'unsealing' && (
+            <div style={{ marginTop: 32, padding: '40px 32px', border: '1px dashed var(--gold)', background: 'rgba(198,166,82,.08)', textAlign: 'center' }}>
+              <div className="mono" style={{ fontSize: 10, letterSpacing: '.22em', color: 'var(--gold)', marginBottom: 12 }}>
+                DECRYPTING · ElGamal BSGS
+              </div>
+              <div className="serif italic" style={{ fontStyle: 'italic', fontSize: 24, color: '#f4f1ea' }}>
+                {t('正在解密链上密文...', 'Decrypting on-chain ciphertexts...')}<span className="cursor" />
+              </div>
+              <div className="mono" style={{ fontSize: 10, color: '#5a5a63', marginTop: 12 }}>
+                Baby-step Giant-step · u32 range · ~{t('几秒', 'a few seconds')}
+              </div>
+            </div>
+          )}
+
           {/* ── Phase: Revealed ─────────────────────────────────────── */}
           {phase === 'revealed' && record && (
             <div style={{ marginTop: 32 }}>
               <RecordHeader address={fetchedAddr} record={record} phase={phase} />
-              <RevealedRecord address={fetchedAddr} record={record} t={t} />
+              <RevealedRecord address={fetchedAddr} record={record} t={t} decryptedBalances={decryptedBalances} />
 
               {/* Action buttons */}
               <div style={{ marginTop: 14, display: 'flex', gap: 8 }}>
