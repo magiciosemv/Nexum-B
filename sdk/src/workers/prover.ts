@@ -22,10 +22,14 @@
 export interface CircuitInputs {
   old_balance_lo: string;
   old_balance_hi: string;
-  transfer_lo: string;
-  transfer_hi: string;
   new_balance_lo: string;
   new_balance_hi: string;
+  swap_amount_lo: string;   // This party's actual transfer amount (balance constraint)
+  swap_amount_hi: string;
+  transfer_lo: string;       // Party A's amount (preimage-only, canonical)
+  transfer_hi: string;
+  transfer_b_lo: string;     // Party B's amount (preimage-only, canonical)
+  transfer_b_hi: string;
   nonce_bits: string[];
   asset_a_mint_bytes: string[];
   asset_b_mint_bytes: string[];
@@ -148,8 +152,10 @@ export class ProverManager {
     try {
       const warmupInputs = createPrivateCircuitInputs({
         old_balance_lo: 0, old_balance_hi: 0,
-        transfer_lo: 0, transfer_hi: 0,
         new_balance_lo: 0, new_balance_hi: 0,
+        swap_amount_lo: 0, swap_amount_hi: 0,
+        transfer_lo: 0, transfer_hi: 0,
+        transfer_b_lo: 0, transfer_b_hi: 0,
         nonce: 0n,
         asset_a_mint: new Uint8Array(32),
         asset_b_mint: new Uint8Array(32),
@@ -284,10 +290,14 @@ export function splitHashToLimbs(hash: Uint8Array): { lo: bigint; hi: bigint } {
 export interface PrivateCircuitParams {
   old_balance_lo: number;
   old_balance_hi: number;
-  transfer_lo: number;
-  transfer_hi: number;
   new_balance_lo: number;
   new_balance_hi: number;
+  swap_amount_lo: number;   // This party's actual transfer amount (balance constraint)
+  swap_amount_hi: number;
+  transfer_lo: number;       // Party A's amount (preimage-only, canonical)
+  transfer_hi: number;
+  transfer_b_lo: number;     // Party B's amount (preimage-only, canonical)
+  transfer_b_hi: number;
   nonce: bigint;
   asset_a_mint: Uint8Array;
   asset_b_mint: Uint8Array;
@@ -296,20 +306,23 @@ export interface PrivateCircuitParams {
 }
 
 export function createPrivateCircuitInputs(params: PrivateCircuitParams): CircuitInputs {
-  const { old_balance_lo, old_balance_hi, transfer_lo, transfer_hi,
-    new_balance_lo, new_balance_hi, nonce, asset_a_mint, asset_b_mint,
-    counterparty, expiry } = params;
+  const { old_balance_lo, old_balance_hi, new_balance_lo, new_balance_hi,
+    swap_amount_lo, swap_amount_hi,
+    transfer_lo, transfer_hi, transfer_b_lo, transfer_b_hi,
+    nonce, asset_a_mint, asset_b_mint, counterparty, expiry } = params;
 
-  // Build 120-byte preimage (same layout as computeCommitment)
-  const preimage = Buffer.alloc(120);
+  // Build 128-byte preimage (v3.1 layout with transfer_b)
+  const preimage = Buffer.alloc(128);
   preimage.writeBigUInt64LE(nonce, 0);
   preimage.writeUInt32LE(transfer_lo, 8);
   preimage.writeUInt32LE(transfer_hi, 12);
-  preimage.set(asset_a_mint, 16);
-  preimage.set(asset_b_mint, 48);
-  preimage.set(counterparty, 80);
-  preimage.writeInt32LE(expiry & 0xFFFFFFFF, 112);
-  preimage.writeInt32LE(Math.floor(expiry / 0x100000000), 116);
+  preimage.writeUInt32LE(transfer_b_lo, 16);
+  preimage.writeUInt32LE(transfer_b_hi, 20);
+  preimage.set(asset_a_mint, 24);
+  preimage.set(asset_b_mint, 56);
+  preimage.set(counterparty, 88);
+  preimage.writeInt32LE(expiry & 0xFFFFFFFF, 120);
+  preimage.writeInt32LE(Math.floor(expiry / 0x100000000), 124);
 
   // Compute SHA-256 commitment hash
   const crypto = require("crypto");
@@ -319,10 +332,14 @@ export function createPrivateCircuitInputs(params: PrivateCircuitParams): Circui
   return {
     old_balance_lo: String(old_balance_lo),
     old_balance_hi: String(old_balance_hi),
-    transfer_lo: String(transfer_lo),
-    transfer_hi: String(transfer_hi),
     new_balance_lo: String(new_balance_lo),
     new_balance_hi: String(new_balance_hi),
+    swap_amount_lo: String(swap_amount_lo),
+    swap_amount_hi: String(swap_amount_hi),
+    transfer_lo: String(transfer_lo),
+    transfer_hi: String(transfer_hi),
+    transfer_b_lo: String(transfer_b_lo),
+    transfer_b_hi: String(transfer_b_hi),
     nonce_bits: toBits64(nonce),
     asset_a_mint_bytes: Array.from(asset_a_mint).map(String),
     asset_b_mint_bytes: Array.from(asset_b_mint).map(String),

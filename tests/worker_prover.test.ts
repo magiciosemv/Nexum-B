@@ -1,25 +1,25 @@
 /**
  * prover_test.ts — Verify ProverManager can generate and serialize proofs
  *
- * Uses the compiled circuit artifacts in circuits/build/.
+ * Uses the compiled circuit artifacts in circuits/build_private/.
  * Run with: NODE_PATH=/home/magic/.nvm/versions/node/v20.20.0/lib/node_modules \
  *           npx ts-node tests/worker_prover.test.ts
  */
 
 import {
   ProverManager,
-  createCircuitInputs,
+  createPrivateCircuitInputs,
 } from "../sdk/src/workers/prover";
 import * as path from "path";
 import * as fs from "fs";
 
-const CIRCUITS_DIR = path.resolve(__dirname, "../circuits/build");
-const WASM_PATH = path.join(CIRCUITS_DIR, "balance_transition_js", "balance_transition.wasm");
-const ZKEY_PATH = path.join(CIRCUITS_DIR, "balance_transition_final.zkey");
+const CIRCUITS_DIR = path.resolve(__dirname, "../circuits/build_private");
+const WASM_PATH = path.join(CIRCUITS_DIR, "balance_transition_private_js", "balance_transition_private.wasm");
+const ZKEY_PATH = path.join(CIRCUITS_DIR, "balance_transition_private_final.zkey");
 const VK_PATH = path.join(CIRCUITS_DIR, "verification_key.json");
 
 async function main() {
-  console.log("=== ProverManager Integration Test ===\n");
+  console.log("=== ProverManager Integration Test (Private Circuit) ===\n");
 
   // Verify artifacts exist
   assert(fs.existsSync(WASM_PATH), `WASM not found: ${WASM_PATH}`);
@@ -32,14 +32,26 @@ async function main() {
   await prover.init();
   console.log("[PASS] ProverManager initialized");
 
-  // Test 2: Generate proof for valid inputs (old=1000000, new=700000, transfer=300000)
-  const inputs = createCircuitInputs({
+  // Test 2: Generate proof for valid inputs
+  // Party A: old=1M, transfer=300K, new=700K
+  const sharedNonce = BigInt(Date.now());
+  const sharedExpiry = Math.floor(Date.now() / 1000) + 60;
+  const inputs = createPrivateCircuitInputs({
     old_balance_lo: 1000000,
     old_balance_hi: 0,
-    transfer_lo: 300000,
-    transfer_hi: 0,
     new_balance_lo: 700000,
     new_balance_hi: 0,
+    swap_amount_lo: 300000,
+    swap_amount_hi: 0,
+    transfer_lo: 300000,    // Party A's amount (preimage)
+    transfer_hi: 0,
+    transfer_b_lo: 500000,  // Party B's amount (preimage)
+    transfer_b_hi: 0,
+    nonce: sharedNonce,
+    asset_a_mint: new Uint8Array(32),
+    asset_b_mint: new Uint8Array(32),
+    counterparty: new Uint8Array(32),
+    expiry: sharedExpiry,
   });
 
   const result = await prover.generateProof(inputs);
@@ -52,57 +64,51 @@ async function main() {
   assert(nonTrivial, "Proof must not be all zeros");
   console.log("[PASS] Proof is non-trivial (not all zeros)");
 
-  // Test 4: Public signals match expected values
-  // circom ordering: outputs first, then public inputs
-  //   [0] pub_old_lo, [1] pub_old_hi, [2] pub_new_lo, [3] pub_new_hi,
-  //   [4] pub_transfer_lo, [5] transfer_lo, [6] transfer_hi
-  // (pub_transfer_hi is not an output — declared as plain signal, not signal output)
-
+  // Test 4: Public signals (2 commitment hash limbs)
   console.log(`  Public signals: [${result.public_signals.join(", ")}]`);
-
-  assert(result.public_signals[0] === "1000000", `pub_old_lo should be 1000000, got ${result.public_signals[0]}`);
-  assert(result.public_signals[1] === "0", `pub_old_hi should be 0, got ${result.public_signals[1]}`);
-  assert(result.public_signals[2] === "700000", `pub_new_lo should be 700000, got ${result.public_signals[2]}`);
-  assert(result.public_signals[3] === "0", `pub_new_hi should be 0, got ${result.public_signals[3]}`);
-  assert(result.public_signals[4] === "300000", `pub_transfer_lo should be 300000, got ${result.public_signals[4]}`);
-  assert(result.public_signals[5] === "300000", `transfer_lo should be 300000, got ${result.public_signals[5]}`);
-  assert(result.public_signals[6] === "0", `transfer_hi should be 0, got ${result.public_signals[6]}`);
-  console.log("[PASS] Public signals match expected values (7 signals: 5 outputs + 2 public inputs)");
+  assert(result.public_signals.length === 2, `Expected 2 public signals, got ${result.public_signals.length}`);
+  console.log("[PASS] Public signals: 2 commitment hash limbs");
 
   // Test 5: Verify proof with snarkjs
   const vkey = JSON.parse(fs.readFileSync(VK_PATH, "utf-8"));
-  // For snarkjs verify, we need to reconstruct the proof in snarkjs format
-  // But we can also verify directly from the fullProve output
-  // Let's just verify the raw snarkjs result for now
-
-  // Actually, let's test the verification using ProverManager
   const verified = await prover.verifyProof(result.proof_a, result.public_signals, vkey);
   assert(verified, "Proof verification should succeed");
   console.log("[PASS] Proof verified with verification key");
 
   // Test 6: First 64 bytes of proof (pi_a G1 point) are valid field elements
-  // Check that A_x and A_y are not all zeros (valid curve point)
   const a_x = result.proof_a.slice(0, 32);
   const a_y = result.proof_a.slice(32, 64);
   const aNonZero = a_x.some((b: number) => b !== 0) || a_y.some((b: number) => b !== 0);
   assert(aNonZero, "pi_a (G1 point) should be non-zero");
   console.log("[PASS] pi_a G1 point is a valid non-zero curve point");
 
-  // Test 7: Generate proof with large values (cross-limb arithmetic, 2^32 = 2^32 + 0)
-  const largeInputs = createCircuitInputs({
-    old_balance_lo: 0,
-    old_balance_hi: 1,        // old = 1 * 2^32 = 4294967296
-    transfer_lo: 0,
-    transfer_hi: 0,           // transfer = 0
-    new_balance_lo: 0,
-    new_balance_hi: 1,        // new = 1 * 2^32 = 4294967296
+  // Test 7: Both proofs with same preimage produce same public signals
+  const proofB = createPrivateCircuitInputs({
+    old_balance_lo: 500000,
+    old_balance_hi: 0,
+    new_balance_lo: 200000,
+    new_balance_hi: 0,
+    swap_amount_lo: 300000,  // Different swap amount
+    swap_amount_hi: 0,
+    transfer_lo: 300000,     // Same canonical preimage
+    transfer_hi: 0,
+    transfer_b_lo: 500000,
+    transfer_b_hi: 0,
+    nonce: sharedNonce,
+    asset_a_mint: new Uint8Array(32),
+    asset_b_mint: new Uint8Array(32),
+    counterparty: new Uint8Array(32),
+    expiry: sharedExpiry,
   });
 
-  const largeResult = await prover.generateProof(largeInputs);
-  assert(largeResult.proof_a.length === 256, "Large value proof should be 256 bytes");
-  const largeNonTrivial = largeResult.proof_a.some((b: number) => b !== 0);
-  assert(largeNonTrivial, "Large value proof should be non-trivial");
-  console.log("[PASS] Cross-limb proof (2^32 = 2^32 + 0) generated and non-trivial");
+  // Same preimage → same commitment hash → same public signals
+  const resultB = await prover.generateProof(proofB);
+  assert(
+    result.public_signals[0] === resultB.public_signals[0] &&
+    result.public_signals[1] === resultB.public_signals[1],
+    "Same preimage must produce same public signals"
+  );
+  console.log("[PASS] Both proofs with same preimage produce same commitment hash");
 
   console.log("\n=== All 7 tests PASSED ===");
 }

@@ -5,7 +5,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const vkPath = path.resolve(__dirname, "../circuits/build/verification_key.json");
+const vkPath = path.resolve(__dirname, "../circuits/build_private/verification_key.json");
 const vk = JSON.parse(fs.readFileSync(vkPath, "utf-8"));
 
 // Convert a decimal string to 32-byte big-endian array

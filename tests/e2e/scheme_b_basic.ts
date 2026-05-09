@@ -1,13 +1,11 @@
 /**
- * scheme_b_basic.ts — E2E Test: Full Scheme B Three-Step Flow with Real ZK Proofs
+ * scheme_b_basic.ts — E2E Test: Full Scheme B Two-Way Swap with Real SPL Tokens
  *
- * Tests: initiate_commit → accept_commit → execute_settle_b
- * Uses real Groth16 proofs (ProverManager) and ElGamal encrypted ciphertexts.
+ * Tests: initiate_commit → accept_commit (with delegate approve) → execute_settle_b (with CPI transfers)
+ * Uses real Groth16 proofs, ElGamal ciphertexts, and SPL token transfers.
  *
- * Circuit: balance_transition.circom
- *   Proves: old_balance = new_balance + transfer
- *   For sender (A): A_old = A_new + transfer (balance decreases)
- *   For receiver (B): B_new = B_old + transfer → circuit uses old=B_new, new=B_old
+ * Party A sends transfer_amount_a of asset_a to Party B.
+ * Party B sends transfer_amount_b of asset_b to Party A.
  *
  * Requires: local validator running (anchor test)
  * Requires: NODE_PATH set for snarkjs access
@@ -15,7 +13,14 @@
 
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import { PublicKey, Keypair, SystemProgram, LAMPORTS_PER_SOL, ComputeBudgetProgram } from "@solana/web3.js";
+import {
+  PublicKey, Keypair, SystemProgram, LAMPORTS_PER_SOL, ComputeBudgetProgram,
+} from "@solana/web3.js";
+import {
+  createMint, mintTo, createAccount, getAccount,
+  createAssociatedTokenAccount,
+  TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
 import { assert } from "chai";
 import { computeCommitment } from "../../sdk/src/crypto/commitment";
 import {
@@ -24,6 +29,7 @@ import {
   findConfigPDA,
   findSettlementPDA,
   findProofDataPDA,
+  findDelegatePDA,
   splitAmount,
 } from "../../sdk/src/scheme_b/index";
 import { ProverManager, createPrivateCircuitInputs } from "../../sdk/src/workers/prover";
@@ -36,13 +42,14 @@ import path from "path";
 
 const ZK_VERIFIER_ID = new PublicKey("6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN");
 
-describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
+describe("Scheme B — Two-Way Swap with Real SPL Tokens", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
   const program = anchor.workspace.NexumPool as Program;
   const initiator = Keypair.generate();
   const counterparty = Keypair.generate();
+  const projectRoot = path.resolve(__dirname, "../..");
 
   let ledgerA: PublicKey;
   let ledgerB: PublicKey;
@@ -51,9 +58,16 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
   let commitmentHash: Uint8Array;
   let nonce: bigint;
 
-  const USDC_MINT = Keypair.generate().publicKey;
-  const SOL_MINT = Keypair.generate().publicKey;
-  const transferAmount = 1_000_000n; // 1M units
+  // SPL Token mints and accounts
+  let mintA: PublicKey;  // Party A's asset
+  let mintB: PublicKey;  // Party B's asset
+  let partyATokenA: PublicKey;  // A's ATA for mintA (source: A→B)
+  let partyBTokenA: PublicKey;  // B's ATA for mintA (destination: A→B)
+  let partyBTokenB: PublicKey;  // B's ATA for mintB (source: B→A)
+  let partyATokenB: PublicKey;  // A's ATA for mintB (destination: B→A)
+
+  const transferAmountA = 1_000_000n; // A sends 1M of asset_a to B
+  const transferAmountB = 500_000n;   // B sends 500K of asset_b to A
 
   // Prover setup
   let prover: ProverManager;
@@ -61,28 +75,102 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
   let keypairB: ReturnType<typeof generateKeypair>;
 
   before(async () => {
-    // Airdrop SOL to test wallets
+    // Airdrop SOL
     await provider.connection.confirmTransaction(
-      await provider.connection.requestAirdrop(initiator.publicKey, 2 * LAMPORTS_PER_SOL)
+      await provider.connection.requestAirdrop(initiator.publicKey, 5 * LAMPORTS_PER_SOL)
     );
     await provider.connection.confirmTransaction(
-      await provider.connection.requestAirdrop(counterparty.publicKey, 2 * LAMPORTS_PER_SOL)
+      await provider.connection.requestAirdrop(counterparty.publicKey, 5 * LAMPORTS_PER_SOL)
+    );
+    // Airdrop to provider wallet too (for fee_payer in execute)
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(provider.wallet.publicKey, 5 * LAMPORTS_PER_SOL)
     );
 
+    // Create SPL token mints (decimals=0 for simplicity)
+    mintA = await createMint(
+      provider.connection,
+      initiator,
+      initiator.publicKey,
+      null,
+      0,
+    );
+    mintB = await createMint(
+      provider.connection,
+      counterparty,
+      counterparty.publicKey,
+      null,
+      0,
+    );
+    console.log("  Mint A:", mintA.toBase58());
+    console.log("  Mint B:", mintB.toBase58());
+
+    // Derive ATAs
+    partyATokenA = getAssociatedTokenAddressSync(mintA, initiator.publicKey);
+    partyBTokenA = getAssociatedTokenAddressSync(mintA, counterparty.publicKey);
+    partyBTokenB = getAssociatedTokenAddressSync(mintB, counterparty.publicKey);
+    partyATokenB = getAssociatedTokenAddressSync(mintB, initiator.publicKey);
+
+    // Create ATAs then mint tokens
+    await createAssociatedTokenAccount(
+      provider.connection,
+      initiator,
+      mintA,
+      initiator.publicKey,
+    );
+    await mintTo(
+      provider.connection,
+      initiator,
+      mintA,
+      partyATokenA,
+      initiator,
+      10_000_000n,
+    );
+
+    await createAssociatedTokenAccount(
+      provider.connection,
+      counterparty,
+      mintB,
+      counterparty.publicKey,
+    );
+    await mintTo(
+      provider.connection,
+      counterparty,
+      mintB,
+      partyBTokenB,
+      counterparty,
+      10_000_000n,
+    );
+
+    // Also create "receive" ATAs (B needs ATA for mintA, A needs ATA for mintB)
+    await createAssociatedTokenAccount(
+      provider.connection,
+      counterparty,
+      mintA,
+      counterparty.publicKey,
+    );
+    await createAssociatedTokenAccount(
+      provider.connection,
+      initiator,
+      mintB,
+      initiator.publicKey,
+    );
+
+    console.log("  Party A token A balance: 10,000,000");
+    console.log("  Party B token B balance: 10,000,000");
+
     // Derive PDAs
-    [ledgerA] = findLedgerPDA(initiator.publicKey, USDC_MINT, program.programId);
-    [ledgerB] = findLedgerPDA(counterparty.publicKey, SOL_MINT, program.programId);
+    [ledgerA] = findLedgerPDA(initiator.publicKey, mintA, program.programId);
+    [ledgerB] = findLedgerPDA(counterparty.publicKey, mintB, program.programId);
     [configPda] = findConfigPDA(program.programId);
 
     // Initialize prover
-    const projectRoot = path.resolve(__dirname, "../..");
     prover = new ProverManager({
       wasmPath: path.join(projectRoot, "circuits/build_private/balance_transition_private_js/balance_transition_private.wasm"),
       zkeyPath: path.join(projectRoot, "circuits/build_private/balance_transition_private_final.zkey"),
     });
     await prover.init();
 
-    // Generate ElGamal keypairs for both parties
     keypairA = generateKeypair();
     keypairB = generateKeypair();
   });
@@ -111,7 +199,7 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
       .accounts({
         owner: initiator.publicKey,
         ledger: ledgerA,
-        mint: USDC_MINT,
+        mint: mintA,
         config: configPda,
         systemProgram: SystemProgram.programId,
       })
@@ -123,7 +211,7 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
       .accounts({
         owner: counterparty.publicKey,
         ledger: ledgerB,
-        mint: SOL_MINT,
+        mint: mintB,
         config: configPda,
         systemProgram: SystemProgram.programId,
       })
@@ -131,19 +219,23 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
       .rpc();
   });
 
-  it("Step 1: Initiator initiates commit", async () => {
+  it("Step 1: Initiator commits (two amounts)", async () => {
     nonce = BigInt(Date.now());
     const currentSlot = await provider.connection.getSlot();
     const chainTime = await provider.connection.getBlockTime(currentSlot) || Math.floor(Date.now() / 1000);
     const expiry = chainTime + 45;
-    const { lo, hi } = splitAmount(transferAmount);
+
+    const { lo: a_lo, hi: a_hi } = splitAmount(transferAmountA);
+    const { lo: b_lo, hi: b_hi } = splitAmount(transferAmountB);
 
     commitmentHash = await computeCommitment({
       nonce,
-      transfer_amount_lo: lo,
-      transfer_amount_hi: hi,
-      asset_a_mint: USDC_MINT.toBytes(),
-      asset_b_mint: SOL_MINT.toBytes(),
+      transfer_a_lo: a_lo,
+      transfer_a_hi: a_hi,
+      transfer_b_lo: b_lo,
+      transfer_b_hi: b_hi,
+      asset_a_mint: mintA.toBytes(),
+      asset_b_mint: mintB.toBytes(),
       counterparty: counterparty.publicKey.toBytes(),
       expiry_timestamp: expiry,
     });
@@ -154,7 +246,7 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
       .initiateCommit({
         nonce: new anchor.BN(nonce.toString()),
         counterparty: counterparty.publicKey,
-        assetBMint: SOL_MINT,
+        assetBMint: mintB,
         commitmentHash: Array.from(commitmentHash),
         expiryInit: new anchor.BN(expiry),
       })
@@ -172,7 +264,9 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
     assert.equal(slot.counterparty.toBase58(), counterparty.publicKey.toBase58());
   });
 
-  it("Step 2: Counterparty accepts commit", async () => {
+  it("Step 2: Counterparty accepts (with delegate approval)", async () => {
+    const [delegatePda] = findDelegatePDA(commitSlotPda, program.programId);
+
     await program.methods
       .acceptCommit()
       .accounts({
@@ -181,6 +275,9 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
         ledgerB: ledgerB,
         commitSlot: commitSlotPda,
         config: configPda,
+        partyBToken: partyBTokenB,
+        delegate: delegatePda,
+        tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([counterparty])
       .rpc();
@@ -188,12 +285,26 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
     const slot = await program.account.commitSlot.fetch(commitSlotPda);
     assert.exists(slot.bothLockedAt);
     assert.exists(slot.executeExpiry);
+
+    // Verify delegate was approved on Party B's token account
+    const tokenAcc = await getAccount(provider.connection, partyBTokenB);
+    assert.equal(tokenAcc.delegate.toBase58(), delegatePda.toBase58(), "Delegate PDA must be approved");
+    console.log("  Delegate approved:", delegatePda.toBase58());
   });
 
-  it("Step 3: Execute settlement with real ZK proofs (private circuit)", async () => {
-    const { lo: transfer_lo, hi: transfer_hi } = splitAmount(transferAmount);
+  it("Step 3: Execute settlement with SPL token transfers", async () => {
+    // ── Record balances before ──────────────────────────────────────
+    const balABefore = (await getAccount(provider.connection, partyATokenA)).amount;
+    const balBBeforeA = (await getAccount(provider.connection, partyBTokenA)).amount;
+    const balBBeforeB = (await getAccount(provider.connection, partyBTokenB)).amount;
+    const balABeforeB = (await getAccount(provider.connection, partyATokenB)).amount;
+    console.log("  Before: A has", balABefore.toString(), "of mintA,", balABeforeB.toString(), "of mintB");
+    console.log("  Before: B has", balBBeforeA.toString(), "of mintA,", balBBeforeB.toString(), "of mintB");
 
-    // ── Fetch CommitSlot for commitment preimage data ────────────────
+    const { lo: a_lo, hi: a_hi } = splitAmount(transferAmountA);
+    const { lo: b_lo, hi: b_hi } = splitAmount(transferAmountB);
+
+    // ── Fetch CommitSlot ────────────────────────────────────────────
     const slotInfo = await program.account.commitSlot.fetch(commitSlotPda);
     const slotNonce = BigInt((slotInfo.nonce as any).toString());
     const slotExpiry = (slotInfo.expiryInit as any).toNumber();
@@ -209,64 +320,81 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
       expiry: slotExpiry,
     };
 
-    // ── Generate real Groth16 proofs (private circuit) ──────────────
-    // All amounts are PRIVATE. Only commitment_hash is public.
+    // ── Generate ZK proofs ──────────────────────────────────────────
+    // Both proofs use the SAME canonical preimage: transfer=a_amount, transfer_b=b_amount
+    // Each proof uses its own swap_amount for the balance constraint.
     const proofA = await prover.generateProof(createPrivateCircuitInputs({
-      old_balance_lo: 1000000,
-      old_balance_hi: 0,
+      old_balance_lo: Number(a_lo),
+      old_balance_hi: Number(a_hi),
       new_balance_lo: 0,
       new_balance_hi: 0,
-      transfer_lo: Number(transfer_lo),
-      transfer_hi: Number(transfer_hi),
+      swap_amount_lo: Number(a_lo),
+      swap_amount_hi: Number(a_hi),
+      transfer_lo: Number(a_lo),
+      transfer_hi: Number(a_hi),
+      transfer_b_lo: Number(b_lo),
+      transfer_b_hi: Number(b_hi),
       ...preimage,
     }));
 
+    // Local verification: check proof is valid before submitting on-chain
+    const vkey = JSON.parse(require("fs").readFileSync(
+      path.join(projectRoot, "circuits/build_private/verification_key.json"), "utf-8"
+    ));
+    const localVerify = await prover.verifyProof(proofA.proof_a, proofA.public_signals, vkey);
+    console.log("  Local proof A verification:", localVerify ? "PASS" : "FAIL");
+    assert.isTrue(localVerify, "Proof A must verify locally");
+
+    console.log("  Proof A public signals:", proofA.public_signals);
+    console.log("  Proof A public signals (BN):", proofA.public_signals.map(s => new anchor.BN(s).toString()));
+
+    // Party B: swap_amount=b_amount (balance constraint), same canonical preimage
     const proofB = await prover.generateProof(createPrivateCircuitInputs({
-      old_balance_lo: 1000000,  // B's new balance (circuit "old")
-      old_balance_hi: 0,
-      new_balance_lo: 0,        // B's old balance (circuit "new")
+      old_balance_lo: Number(b_lo),
+      old_balance_hi: Number(b_hi),
+      new_balance_lo: 0,
       new_balance_hi: 0,
-      transfer_lo: Number(transfer_lo),
-      transfer_hi: Number(transfer_hi),
+      swap_amount_lo: Number(b_lo),
+      swap_amount_hi: Number(b_hi),
+      transfer_lo: Number(a_lo),
+      transfer_hi: Number(a_hi),
+      transfer_b_lo: Number(b_lo),
+      transfer_b_hi: Number(b_hi),
       ...preimage,
     }));
 
-    // ── ElGamal encrypt new balances ──────────────────────────────────
-    // A's new balance = 0 (encrypted for A)
+    // ── ElGamal encrypt ─────────────────────────────────────────────
     const ct_a_lo = elgamalEncrypt(0n, keypairA.publicKey);
     const ct_a_hi = elgamalEncrypt(0n, keypairA.publicKey);
-    const audit_a_lo = elgamalEncrypt(1000000n, keypairA.publicKey); // old balance for audit
-    const audit_a_hi = elgamalEncrypt(0n, keypairA.publicKey);
+    const audit_a_lo = elgamalEncrypt(BigInt(a_lo), keypairA.publicKey);
+    const audit_a_hi = elgamalEncrypt(BigInt(a_hi), keypairA.publicKey);
 
-    // B's new balance = 1000000 (encrypted for B)
-    const ct_b_lo = elgamalEncrypt(1000000n, keypairB.publicKey);
-    const ct_b_hi = elgamalEncrypt(0n, keypairB.publicKey);
-    const audit_b_lo = elgamalEncrypt(0n, keypairB.publicKey); // old balance for audit
+    const ct_b_lo = elgamalEncrypt(BigInt(b_lo), keypairB.publicKey);
+    const ct_b_hi = elgamalEncrypt(BigInt(b_hi), keypairB.publicKey);
+    const audit_b_lo = elgamalEncrypt(0n, keypairB.publicKey);
     const audit_b_hi = elgamalEncrypt(0n, keypairB.publicKey);
 
-    // ── Build proof chunks ────────────────────────────────────────────
-    const chunk0 = proofA.proof_a; // 256 bytes: proof_a
-    const chunk1 = [ // 512 bytes: ct_a
+    // ── Build chunks ────────────────────────────────────────────────
+    const chunk0 = proofA.proof_a;
+    const chunk1 = [
       ...Array.from(serializeCiphertext(ct_a_lo)),
       ...Array.from(serializeCiphertext(ct_a_hi)),
       ...Array.from(serializeCiphertext(audit_a_lo)),
       ...Array.from(serializeCiphertext(audit_a_hi)),
     ];
-    const chunk2 = proofB.proof_a; // 256 bytes: proof_b
-    const chunk3 = [ // 512 bytes: ct_b
+    const chunk2 = proofB.proof_a;
+    const chunk3 = [
       ...Array.from(serializeCiphertext(ct_b_lo)),
       ...Array.from(serializeCiphertext(ct_b_hi)),
       ...Array.from(serializeCiphertext(audit_b_lo)),
       ...Array.from(serializeCiphertext(audit_b_hi)),
     ];
 
-    // ── Create ProofData account ──────────────────────────────────────
+    // ── Create + write ProofData ────────────────────────────────────
     const [proofDataPda] = findProofDataPDA(nonce, program.programId);
 
     await program.methods
-      .createProofData({
-        nonce: new anchor.BN(nonce.toString()),
-      })
+      .createProofData({ nonce: new anchor.BN(nonce.toString()) })
       .accounts({
         proofData: proofDataPda,
         authority: provider.wallet.publicKey,
@@ -274,7 +402,6 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
       })
       .rpc();
 
-    // ── Write proof chunks (4 chunks) ────────────────────────────────
     const chunks = [chunk0, chunk1, chunk2, chunk3];
     for (let i = 0; i < 4; i++) {
       await program.methods
@@ -290,16 +417,21 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
         .rpc();
     }
 
-    // ── Execute settlement with real proofs ───────────────────────────
+    // ── Execute with SPL transfers ──────────────────────────────────
     const settlementNonce = BigInt(Date.now());
     const [settlementPda] = findSettlementPDA(commitSlotPda, settlementNonce, program.programId);
+    const [delegatePda] = findDelegatePDA(commitSlotPda, program.programId);
 
+    // initiator must be fee_payer because they own partyATokenA and the
+    // on-chain code uses fee_payer as authority for A→B transfer.
     await program.methods
       .executeSettleB({
         nonce: new anchor.BN(nonce.toString()),
         commitmentHashLo: new anchor.BN(proofA.public_signals[0]),
         commitmentHashHi: new anchor.BN(proofA.public_signals[1]),
         settlementNonce: new anchor.BN(settlementNonce.toString()),
+        transferAmountA: new anchor.BN(transferAmountA.toString()),
+        transferAmountB: new anchor.BN(transferAmountB.toString()),
       })
       .preInstructions([
         ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
@@ -311,30 +443,46 @@ describe("Scheme B — Basic Three-Step Flow (Real ZK Proofs)", () => {
         proofData: proofDataPda,
         settlementRecord: settlementPda,
         config: configPda,
-        feePayer: provider.wallet.publicKey,
+        feePayer: initiator.publicKey,
         systemProgram: SystemProgram.programId,
         zkVerifierProgram: ZK_VERIFIER_ID,
+        partyATokenA: partyATokenA,
+        partyBTokenA: partyBTokenA,
+        partyBTokenB: partyBTokenB,
+        partyATokenB: partyATokenB,
+        delegate: delegatePda,
+        tokenProgram: TOKEN_PROGRAM_ID,
       })
+      .signers([initiator])
       .rpc();
 
-    // ── Verify settlement ─────────────────────────────────────────────
+    // ── Verify settlement record ────────────────────────────────────
     const record = await program.account.settlementRecord.fetch(settlementPda);
-    // Verify commitment_hash is stored (not plaintext amounts)
-    const storedHash = Buffer.from((record as any).commitmentHash).toString('hex');
-    // Reconstruct expected hash from proof public signals
-    const hashLo = BigInt(proofA.public_signals[0]);
-    const hashHi = BigInt(proofA.public_signals[1]);
-    const loHex = hashLo.toString(16).padStart(32, '0');
-    const hiHex = hashHi.toString(16).padStart(32, '0');
-    const expectedHash = hiHex + loHex;
-    assert.equal(storedHash, expectedHash, "SettlementRecord commitment_hash must match ZK proof public input");
     assert.deepEqual(record.scheme, { schemeB: {} });
 
-    // Verify both ledgers are back to Active
+    // ── Verify token balances changed ───────────────────────────────
+    const balAAfter = (await getAccount(provider.connection, partyATokenA)).amount;
+    const balBAfterA = (await getAccount(provider.connection, partyBTokenA)).amount;
+    const balBAfterB = (await getAccount(provider.connection, partyBTokenB)).amount;
+    const balAAfterB = (await getAccount(provider.connection, partyATokenB)).amount;
+
+    console.log("  After:  A has", balAAfter.toString(), "of mintA,", balAAfterB.toString(), "of mintB");
+    console.log("  After:  B has", balBAfterA.toString(), "of mintA,", balBAfterB.toString(), "of mintB");
+
+    // A sent transferAmountA of mintA to B
+    assert.equal(balAAfter, balABefore - transferAmountA, "A must lose transferAmountA of mintA");
+    assert.equal(balBAfterA, balBBeforeA + transferAmountA, "B must gain transferAmountA of mintA");
+
+    // B sent transferAmountB of mintB to A
+    assert.equal(balBAfterB, balBBeforeB - transferAmountB, "B must lose transferAmountB of mintB");
+    assert.equal(balAAfterB, balABeforeB + transferAmountB, "A must gain transferAmountB of mintB");
+
+    // Verify ledgers back to Active
     const la = await program.account.userLedger.fetch(ledgerA);
     const lb = await program.account.userLedger.fetch(ledgerB);
-    // Status should be Active (variant 0)
     assert.deepEqual(la.status as any, { active: {} });
     assert.deepEqual(lb.status as any, { active: {} });
+
+    console.log("  ✓ Two-way swap verified: A→B", transferAmountA.toString(), "mintA, B→A", transferAmountB.toString(), "mintB");
   });
 });

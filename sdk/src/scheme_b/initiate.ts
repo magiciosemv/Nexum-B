@@ -16,7 +16,8 @@ export interface InitiateParams {
   counterparty: PublicKey;
   asset_a_mint: PublicKey;
   asset_b_mint: PublicKey;
-  transfer_amount: bigint;   // Full-precision amount (smallest unit)
+  transfer_amount_a: bigint;  // A→B amount (asset_a_mint)
+  transfer_amount_b: bigint;  // B→A amount (asset_b_mint)
   expiry_seconds: number;     // 30-60 seconds
 }
 
@@ -38,24 +39,25 @@ export async function initiateCommit(
   if (params.expiry_seconds < 30 || params.expiry_seconds > 60) {
     throw new Error(`expiry_seconds must be 30-60, got ${params.expiry_seconds}`);
   }
-  if (params.transfer_amount <= 0n) {
-    throw new Error("transfer_amount must be positive");
+  if (params.transfer_amount_a <= 0n) {
+    throw new Error("transfer_amount_a must be positive");
   }
 
   // ── Compute commitment hash (< 1ms off-chain) ─────────────────────
-  const nonce = BigInt(Date.now()); // millisecond timestamp, sufficient for uniqueness
-  // Use chain time (not local Date.now()) to avoid clock drift causing WindowTooShort.
-  // Add 5s buffer for transaction propagation latency.
+  const nonce = BigInt(Date.now());
   const currentSlot = await program.provider.connection.getSlot();
   const chainTime = await program.provider.connection.getBlockTime(currentSlot)
     ?? Math.floor(Date.now() / 1000);
-  const expiry = chainTime + params.expiry_seconds + 5; // +5s buffer (total must be 30-60s after TX latency)
-  const { lo: transfer_lo, hi: transfer_hi } = splitAmount(params.transfer_amount);
+  const expiry = chainTime + params.expiry_seconds + 5;
+  const { lo: a_lo, hi: a_hi } = splitAmount(params.transfer_amount_a);
+  const { lo: b_lo, hi: b_hi } = splitAmount(params.transfer_amount_b);
 
   const commitment_hash = await computeCommitment({
     nonce,
-    transfer_amount_lo: transfer_lo,
-    transfer_amount_hi: transfer_hi,
+    transfer_a_lo: a_lo,
+    transfer_a_hi: a_hi,
+    transfer_b_lo: b_lo,
+    transfer_b_hi: b_hi,
     asset_a_mint: params.asset_a_mint.toBytes(),
     asset_b_mint: params.asset_b_mint.toBytes(),
     counterparty: params.counterparty.toBytes(),

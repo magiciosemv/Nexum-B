@@ -643,7 +643,8 @@ export default function TraderTerminal({ lang, setLang }: TraderTerminalProps) {
       await schemeB.initiate(
         counterparty,
         mintB,
-        BigInt(amount),
+        BigInt(amount),  // amountA: Party A → Party B
+        BigInt(amount),  // amountB: Party B → Party A (symmetric for now)
         mintA,
       );
     } catch {
@@ -654,7 +655,7 @@ export default function TraderTerminal({ lang, setLang }: TraderTerminalProps) {
   // ── Accept handler (demo) ───────────────────────────────────────────
   const handleSimAccept = useCallback(async () => {
     try {
-      await schemeB.verifyAndAccept(BigInt(amount));
+      await schemeB.verifyAndAccept(BigInt(amount), BigInt(amount));  // both amounts symmetric
     } catch {
       // Error already captured by hook
     }

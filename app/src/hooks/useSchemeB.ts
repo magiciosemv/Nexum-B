@@ -1,10 +1,11 @@
 /**
- * useSchemeB — React Hook for Scheme B Settlement Flow
+ * useSchemeB — React Hook for Scheme B Settlement Flow (Two-Way Swap)
  *
  * Manages the full three-step state machine:
  * IDLE → INITIATING → WAITING_ACCEPT → BOTH_LOCKED → GENERATING_PROOF → SUBMITTING_EXECUTE → SETTLED
  *
  * Step 3 generates REAL ZK proofs in the browser via snarkjs WASM.
+ * SPL tokens are transferred atomically: A→B (asset_a) and B→A (asset_b).
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -17,6 +18,8 @@ import {
   findConfigPDA,
   findSettlementPDA,
   findProofDataPDA,
+  findAssociatedTokenAddress,
+  findDelegatePDA,
   splitAmount,
 } from "@nexum/sdk";
 import { initiateCommit } from "@nexum/sdk";
@@ -28,11 +31,11 @@ import {
   serializeCiphertext,
 } from "@nexum/sdk";
 
-// ── Browser-compatible ZK proof helpers ──────────────────────────────
-// ProverManager uses require("snarkjs") which doesn't work in browser.
-// These inline functions use ESM import and the same math.
+// ── SPL Token constants ─────────────────────────────────────────────
+const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
-/** BN254 field modulus for negation */
+// ── Browser-compatible ZK proof helpers ──────────────────────────────
+
 const BN254_P = BigInt("21888242871839275222246405745257275088548364400416034343698204186575808495617");
 
 function fieldToBytes32(fieldStr: string): number[] {
@@ -59,11 +62,9 @@ function serializeProofBrowser(
   const b_y_c1 = fieldToBytes32(pi_b[1][1]);
   const c_x = fieldToBytes32(pi_c[0]);
   const c_y = fieldToBytes32(pi_c[1]);
-  // EIP-197 order: c1 before c0 per Fp² coordinate
   return [...a_x, ...a_y, ...b_x_c1, ...b_x_c0, ...b_y_c1, ...b_y_c0, ...c_x, ...c_y];
 }
 
-/** Convert u64 value to 64-bit binary array (LSB-first) */
 function toBits64(val: bigint | number): string[] {
   const v = BigInt(val);
   return Array.from({ length: 64 }, (_, i) => String(Number((v >> BigInt(i)) & 1n)));
@@ -72,27 +73,30 @@ function toBits64(val: bigint | number): string[] {
 async function browserGenerateProof(inputs: {
   old_balance_lo: number; old_balance_hi: number;
   new_balance_lo: number; new_balance_hi: number;
+  swap_amount_lo: number; swap_amount_hi: number;
   transfer_lo: number; transfer_hi: number;
+  transfer_b_lo: number; transfer_b_hi: number;
   nonce: bigint;
   asset_a_mint: Uint8Array;
   asset_b_mint: Uint8Array;
   counterparty: Uint8Array;
   expiry: number;
 }, wasmUrl: string, zkeyUrl: string): Promise<{ proofBytes: number[]; publicSignals: string[] }> {
-  // Dynamic import — snarkjs is bundled by Vite, loaded as ESM
   const snarkjs = await import("snarkjs");
 
-  // Build commitment hash for public input
-  const preimage = new Uint8Array(120);
+  // Build 128-byte commitment hash preimage (v3.1 two-way swap layout)
+  const preimage = new Uint8Array(128);
   const dv = new DataView(preimage.buffer);
-  dv.setBigUint64(0, inputs.nonce, true);       // nonce LE
-  dv.setUint32(8, inputs.transfer_lo, true);     // transfer_lo LE
-  dv.setUint32(12, inputs.transfer_hi, true);    // transfer_hi LE
-  preimage.set(inputs.asset_a_mint, 16);
-  preimage.set(inputs.asset_b_mint, 48);
-  preimage.set(inputs.counterparty, 80);
-  dv.setInt32(112, inputs.expiry & 0xFFFFFFFF, true);
-  dv.setInt32(116, Math.floor(inputs.expiry / 0x100000000), true);
+  dv.setBigUint64(0, inputs.nonce, true);           // nonce LE
+  dv.setUint32(8, inputs.transfer_lo, true);        // transfer_a_lo LE
+  dv.setUint32(12, inputs.transfer_hi, true);       // transfer_a_hi LE
+  dv.setUint32(16, inputs.transfer_b_lo, true);     // transfer_b_lo LE
+  dv.setUint32(20, inputs.transfer_b_hi, true);     // transfer_b_hi LE
+  preimage.set(inputs.asset_a_mint, 24);
+  preimage.set(inputs.asset_b_mint, 56);
+  preimage.set(inputs.counterparty, 88);
+  dv.setInt32(120, inputs.expiry & 0xFFFFFFFF, true);
+  dv.setInt32(124, Math.floor(inputs.expiry / 0x100000000), true);
 
   const hashBuf = await crypto.subtle.digest("SHA-256", preimage);
   const hash = new Uint8Array(hashBuf);
@@ -104,8 +108,12 @@ async function browserGenerateProof(inputs: {
     old_balance_hi: String(inputs.old_balance_hi),
     new_balance_lo: String(inputs.new_balance_lo),
     new_balance_hi: String(inputs.new_balance_hi),
+    swap_amount_lo: String(inputs.swap_amount_lo),
+    swap_amount_hi: String(inputs.swap_amount_hi),
     transfer_lo: String(inputs.transfer_lo),
     transfer_hi: String(inputs.transfer_hi),
+    transfer_b_lo: String(inputs.transfer_b_lo),
+    transfer_b_hi: String(inputs.transfer_b_hi),
     nonce_bits: toBits64(inputs.nonce),
     asset_a_mint_bytes: Array.from(inputs.asset_a_mint).map(String),
     asset_b_mint_bytes: Array.from(inputs.asset_b_mint).map(String),
@@ -145,15 +153,11 @@ export type CounterpartyState =
   | "SETTLED"
   | "ERROR";
 
-// ── Settlement TX records ────────────────────────────────────────────
-
 export interface SettlementTxs {
   txCreateProof: string;
   txsWriteProof: string[];
   txExecute: string;
 }
-
-// ── Hook Return Type ─────────────────────────────────────────────────
 
 export interface SchemeBState {
   initiatorState: InitiatorState;
@@ -165,8 +169,8 @@ export interface SchemeBState {
   hashValid: boolean | null;
   lastTxHash: string;
   settlementTxs: SettlementTxs | null;
-  initiate: (counterparty: string, assetBMint: string, amount: bigint, assetAMint?: string) => Promise<void>;
-  verifyAndAccept: (amount: bigint) => Promise<void>;
+  initiate: (counterparty: string, assetBMint: string, amountA: bigint, amountB: bigint, assetAMint?: string) => Promise<void>;
+  verifyAndAccept: (amountA: bigint, amountB: bigint) => Promise<void>;
   executeSettlement: () => Promise<void>;
   cancelInitiate: () => Promise<void>;
   cancelMutual: () => Promise<void>;
@@ -174,11 +178,7 @@ export interface SchemeBState {
   error: string | null;
 }
 
-// ── ZK Verifier program ID ───────────────────────────────────────────
-
 const ZK_VERIFIER_ID = new PublicKey("6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN");
-
-// ── Hook Implementation ─────────────────────────────────────────────
 
 export function useSchemeB(
   program: anchor.Program | null,
@@ -195,14 +195,14 @@ export function useSchemeB(
   const [lastTxHash, setLastTxHash] = useState("");
   const [settlementTxs, setSettlementTxs] = useState<SettlementTxs | null>(null);
 
-  // Store params for execute/cancel steps
   const pendingParams = useRef<{
     ledgerA: PublicKey;
     commitSlotId: PublicKey;
     counterparty: PublicKey;
     assetAMint: PublicKey;
     assetBMint: PublicKey;
-    amount: bigint;
+    amountA: bigint;
+    amountB: bigint;
     nonce: bigint;
     expiry: number;
   } | null>(null);
@@ -213,7 +213,6 @@ export function useSchemeB(
     setLogs(prev => [...prev.slice(-80), `[${new Date().toLocaleTimeString()}] ${msg}`]);
   }, []);
 
-  // Browser-safe hex → Uint8Array
   const hexToBytes = (hex: string): Uint8Array => {
     const bytes = new Uint8Array(hex.length / 2);
     for (let i = 0; i < hex.length; i += 2) {
@@ -226,13 +225,14 @@ export function useSchemeB(
   const initiate = useCallback(async (
     counterparty: string,
     assetBMint: string,
-    amount: bigint,
+    amountA: bigint,
+    amountB: bigint,
     assetAMint?: string,
   ) => {
     if (!program || !wallet) return;
     setError(null);
     setInitiatorState("GENERATING_HASH");
-    log("Computing commitment hash...");
+    log("Computing commitment hash (two-way swap)...");
 
     try {
       const cpPubkey = new PublicKey(counterparty);
@@ -241,7 +241,6 @@ export function useSchemeB(
         ? new PublicKey(assetAMint)
         : new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
 
-      // ── Ensure Ledger A exists ────────────────────────────────────
       const [ledgerA] = findLedgerPDA(wallet.publicKey, mintAPubkey, program.programId);
       const ledgerInfo = await program.provider.connection.getAccountInfo(ledgerA);
       if (!ledgerInfo) {
@@ -261,7 +260,7 @@ export function useSchemeB(
       }
 
       setInitiatorState("SUBMITTING_INITIATE");
-      log("Submitting initiate_commit...");
+      log(`Submitting initiate_commit (A→B: ${amountA}, B→A: ${amountB})...`);
 
       let result;
       try {
@@ -269,7 +268,8 @@ export function useSchemeB(
           counterparty: cpPubkey,
           asset_a_mint: mintAPubkey,
           asset_b_mint: mintBPubkey,
-          transfer_amount: amount,
+          transfer_amount_a: amountA,
+          transfer_amount_b: amountB,
           expiry_seconds: 50,
         });
       } catch (err: any) {
@@ -296,7 +296,8 @@ export function useSchemeB(
             counterparty: cpPubkey,
             assetAMint: mintAPubkey,
             assetBMint: mintBPubkey,
-            amount,
+            amountA,
+            amountB,
             nonce: rawNonce,
             expiry: 0,
           };
@@ -348,7 +349,8 @@ export function useSchemeB(
         counterparty: cpPubkey,
         assetAMint: mintAPubkey,
         assetBMint: mintBPubkey,
-        amount,
+        amountA,
+        amountB,
         nonce: result.nonce,
         expiry: result.expiry,
       };
@@ -389,22 +391,25 @@ export function useSchemeB(
   }, [program, wallet, log]);
 
   // ── Verify & Accept action (counterparty) ─────────────────────────
-  const verifyAndAccept = useCallback(async (amount: bigint) => {
+  const verifyAndAccept = useCallback(async (amountA: bigint, amountB: bigint) => {
     if (!program || !wallet || !pendingParams.current) return;
     setError(null);
     setCounterpartyState("VERIFYING_HASH");
-    log("Verifying commitment hash locally...");
+    log("Verifying commitment hash locally (both amounts)...");
 
     try {
       const p = pendingParams.current;
-      const { lo, hi } = splitAmount(amount);
+      const { lo: a_lo, hi: a_hi } = splitAmount(amountA);
+      const { lo: b_lo, hi: b_hi } = splitAmount(amountB);
 
       const valid = await verifyCommitment(
         hexToBytes(commitmentHash),
         {
           nonce: p.nonce,
-          transfer_amount_lo: lo,
-          transfer_amount_hi: hi,
+          transfer_a_lo: a_lo,
+          transfer_a_hi: a_hi,
+          transfer_b_lo: b_lo,
+          transfer_b_hi: b_hi,
           asset_a_mint: p.assetAMint.toBytes(),
           asset_b_mint: p.assetBMint.toBytes(),
           counterparty: p.counterparty.toBytes(),
@@ -415,21 +420,22 @@ export function useSchemeB(
       setHashValid(valid);
 
       if (!valid) {
-        log("Hash MISMATCH — the committed amount differs from agreed.");
+        log("Hash MISMATCH — the committed amounts differ from agreed.");
         return;
       }
 
-      log("Hash verified. Submitting accept_commit...");
+      log("Hash verified. Submitting accept_commit (with delegate approval)...");
       setCounterpartyState("SUBMITTING_ACCEPT");
 
       await acceptCommit(program, wallet, {
         commit_slot_id: p.commitSlotId,
-        transfer_amount: amount,
+        transfer_amount_a: amountA,
+        transfer_amount_b: amountB,
       });
 
       clearInterval(countdownRef.current);
       setInitiatorState("BOTH_LOCKED");
-      log("Both locked. Ready for ZK proof execution.");
+      log("Both locked. Delegate approved for B→A transfer. Ready for ZK proof execution.");
     } catch (err: any) {
       setError(err.message);
       setCounterpartyState("ERROR");
@@ -437,7 +443,7 @@ export function useSchemeB(
     }
   }, [program, wallet, commitmentHash, log]);
 
-  // ── Execute Settlement (Step 3 — ZK proofs in browser) ────────────
+  // ── Execute Settlement (Step 3 — ZK proofs + SPL token transfers) ──
   const executeSettlement = useCallback(async () => {
     if (!program || !wallet || !pendingParams.current) return;
     setError(null);
@@ -445,16 +451,15 @@ export function useSchemeB(
 
     try {
       const p = pendingParams.current;
-      const { lo: transfer_lo, hi: transfer_hi } = splitAmount(p.amount);
+      const { lo: transfer_lo, hi: transfer_hi } = splitAmount(p.amountA);
       const tLo = Number(transfer_lo);
       const tHi = Number(transfer_hi);
 
-      // ── Phase 1: ZK Proof Generation (Private Circuit) ──────────────
+      // ── Phase 1: ZK Proof Generation ──────────────────────────────
       log("Loading snarkjs WASM prover (private circuit, ~95K constraints)...");
       const WASM_URL = "/circuits/balance_transition_private.wasm";
       const ZKEY_URL = "/circuits/balance_transition_private_final.zkey";
 
-      // Fetch CommitSlot for commitment preimage data
       const slotData = await (program.account as any).commitSlot.fetch(p.commitSlotId);
       const slotNonce = BigInt((slotData.nonce as anchor.BN).toString());
       const slotExpiry = (slotData.expiryInit as anchor.BN).toNumber();
@@ -475,38 +480,41 @@ export function useSchemeB(
       const keypairB = generateKeypair();
       log("✓ ElGamal keypairs generated");
 
+      const { lo: b_lo, hi: b_hi } = splitAmount(p.amountB);
+
       log("Generating ZK proof for Party A (private circuit)...");
       const proofA = await browserGenerateProof({
         old_balance_lo: tLo, old_balance_hi: tHi,
         new_balance_lo: 0, new_balance_hi: 0,
+        swap_amount_lo: tLo, swap_amount_hi: tHi,
         transfer_lo: tLo, transfer_hi: tHi,
+        transfer_b_lo: Number(b_lo), transfer_b_hi: Number(b_hi),
         ...commitmentPreimage,
       }, WASM_URL, ZKEY_URL);
-      log(`✓ Proof A: ${proofA.proofBytes.length} bytes, public signals: ${proofA.publicSignals.length}`);
+      log(`✓ Proof A: ${proofA.proofBytes.length} bytes`);
 
       log("Generating ZK proof for Party B (private circuit)...");
       const proofB = await browserGenerateProof({
-        old_balance_lo: tLo, old_balance_hi: tHi,
+        old_balance_lo: Number(b_lo), old_balance_hi: Number(b_hi),
         new_balance_lo: 0, new_balance_hi: 0,
+        swap_amount_lo: Number(b_lo), swap_amount_hi: Number(b_hi),
         transfer_lo: tLo, transfer_hi: tHi,
+        transfer_b_lo: Number(b_lo), transfer_b_hi: Number(b_hi),
         ...commitmentPreimage,
       }, WASM_URL, ZKEY_URL);
-      log(`✓ Proof B: ${proofB.proofBytes.length} bytes, public signals: ${proofB.publicSignals.length}`);
+      log(`✓ Proof B: ${proofB.proofBytes.length} bytes`);
 
       log("Encrypting balances with ElGamal...");
-      // Party A: new=0 (sent), audit=transfer (old balance)
       const ct_a_lo = elgamalEncrypt(0n, keypairA.publicKey);
       const ct_a_hi = elgamalEncrypt(0n, keypairA.publicKey);
       const audit_a_lo = elgamalEncrypt(BigInt(tLo), keypairA.publicKey);
       const audit_a_hi = elgamalEncrypt(BigInt(tHi), keypairA.publicKey);
-      // Party B: new=transfer (received), audit=0 (old balance)
-      const ct_b_lo = elgamalEncrypt(BigInt(tLo), keypairB.publicKey);
-      const ct_b_hi = elgamalEncrypt(BigInt(tHi), keypairB.publicKey);
+      const ct_b_lo = elgamalEncrypt(BigInt(b_lo), keypairB.publicKey);
+      const ct_b_hi = elgamalEncrypt(BigInt(b_hi), keypairB.publicKey);
       const audit_b_lo = elgamalEncrypt(0n, keypairB.publicKey);
       const audit_b_hi = elgamalEncrypt(0n, keypairB.publicKey);
       log("✓ 8 ciphertexts generated");
 
-      // Build proof chunks
       const chunk0 = proofA.proofBytes;
       const chunk1 = [
         ...Array.from(serializeCiphertext(ct_a_lo)),
@@ -522,17 +530,14 @@ export function useSchemeB(
         ...Array.from(serializeCiphertext(audit_b_hi)),
       ];
 
-      // ── Phase 2: On-chain submission ────────────────────────────────
+      // ── Phase 2: On-chain submission ──────────────────────────────
       setInitiatorState("SUBMITTING_EXECUTE");
 
-      // Derive PDAs from fetched slot data
       const [ledgerA] = findLedgerPDA(slotData.initiator, slotData.assetAMint, program.programId);
       const [ledgerB] = findLedgerPDA(slotData.counterparty, slotData.assetBMint, program.programId);
       const [configPda] = findConfigPDA(program.programId);
       const [proofDataPda] = findProofDataPDA(slotNonce, program.programId);
 
-      // Step 3a: Create ProofData
-      // Helper: send TX with "already processed" retry
       const sendTx = async (rpcCall: () => Promise<string>, label: string): Promise<string> => {
         try {
           return await rpcCall();
@@ -540,7 +545,6 @@ export function useSchemeB(
           if (err.message?.includes("already been processed") || err.message?.includes("already processed")) {
             log(`${label}: already submitted, confirming...`);
             await new Promise(r => setTimeout(r, 3000));
-            // Fetch sig from chain
             try {
               const sigs = await program.provider.connection.getSignaturesForAddress(proofDataPda, { limit: 1 });
               if (sigs && sigs.length > 0) return sigs[0].signature;
@@ -565,7 +569,6 @@ export function useSchemeB(
       );
       log(`✓ ProofData created — TX: ${sig3a}`);
 
-      // Step 3b: Write 4 chunks
       const chunks = [chunk0, chunk1, chunk2, chunk3];
       const chunkSigs: string[] = [];
       for (let i = 0; i < 4; i++) {
@@ -589,10 +592,22 @@ export function useSchemeB(
         log(`✓ Chunk ${i}/3 written — TX: ${sig}`);
       }
 
-      // Step 3c: Execute settlement
-      log("Executing settlement (ZK verification on-chain, 400K CU)...");
+      // Step 3c: Execute settlement with SPL token transfers
+      log("Executing settlement (ZK + SPL token transfers, 400K CU)...");
       const settlementNonce = BigInt(Date.now());
       const [settlementPda] = findSettlementPDA(p.commitSlotId, settlementNonce, program.programId);
+
+      // Derive SPL token accounts
+      const initiatorPk = slotData.initiator;
+      const counterpartyPk = slotData.counterparty;
+      const assetAMintPk = slotData.assetAMint;
+      const assetBMintPk = slotData.assetBMint;
+
+      const partyATokenA = findAssociatedTokenAddress(initiatorPk, assetAMintPk);
+      const partyBTokenA = findAssociatedTokenAddress(counterpartyPk, assetAMintPk);
+      const partyBTokenB = findAssociatedTokenAddress(counterpartyPk, assetBMintPk);
+      const partyATokenB = findAssociatedTokenAddress(initiatorPk, assetBMintPk);
+      const [delegatePda] = findDelegatePDA(p.commitSlotId, program.programId);
 
       const sig3c = await sendTx(async () =>
         program.methods
@@ -601,6 +616,8 @@ export function useSchemeB(
             commitmentHashLo: new anchor.BN(proofA.publicSignals[0]),
             commitmentHashHi: new anchor.BN(proofA.publicSignals[1]),
             settlementNonce: new anchor.BN(settlementNonce.toString()),
+            transferAmountA: new anchor.BN(p.amountA.toString()),
+            transferAmountB: new anchor.BN(p.amountB.toString()),
           })
           .preInstructions([
             ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
@@ -615,12 +632,19 @@ export function useSchemeB(
             feePayer: wallet.publicKey,
             systemProgram: SystemProgram.programId,
             zkVerifierProgram: ZK_VERIFIER_ID,
+            partyATokenA: partyATokenA,
+            partyBTokenA: partyBTokenA,
+            partyBTokenB: partyBTokenB,
+            partyATokenB: partyATokenB,
+            delegate: delegatePda,
+            tokenProgram: TOKEN_PROGRAM_ID,
           })
           .rpc({ commitment: "confirmed" }),
         "Execute"
       );
 
       log(`✓ SETTLEMENT EXECUTED — TX: ${sig3c}`);
+      log(`  A→B: ${p.amountA} of asset_a, B→A: ${p.amountB} of asset_b`);
       setLastTxHash(sig3c);
       setSettlementTxs({
         txCreateProof: sig3a,
@@ -628,7 +652,7 @@ export function useSchemeB(
         txExecute: sig3c,
       });
       setInitiatorState("SETTLED");
-      log("Settlement complete! Both ledgers returned to Active.");
+      log("Settlement complete! Both ledgers returned to Active. Tokens transferred.");
 
     } catch (err: any) {
       setError(err.message);
@@ -637,7 +661,7 @@ export function useSchemeB(
     }
   }, [program, wallet, log]);
 
-  // ── Force cancel: read pending nonce from chain when state is lost ──
+  // ── Force cancel ──────────────────────────────────────────────────
   const forceCancel = useCallback(async () => {
     if (!program || !wallet) return;
     try {
@@ -659,7 +683,6 @@ export function useSchemeB(
           throw err;
         }
       }
-      // Verify unlock
       await new Promise(r => setTimeout(r, 2000));
       const info2 = await program.provider.connection.getAccountInfo(ledgerA);
       if (info2 && info2.data[592] === 0) {
@@ -674,7 +697,6 @@ export function useSchemeB(
     }
   }, [program, wallet, log]);
 
-  // ── Cancel actions ────────────────────────────────────────────────
   const cancelInitiateAction = useCallback(async () => {
     if (!program || !wallet || !pendingParams.current) return;
     try {

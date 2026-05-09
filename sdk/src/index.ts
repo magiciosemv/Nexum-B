@@ -38,7 +38,7 @@ export {
 
 export { initiateCommit } from "./scheme_b/initiate";
 export { acceptCommit } from "./scheme_b/accept";
-export { executeSettle, buildProofData } from "./scheme_b/execute";
+export { executeSettle, buildProofData, findAssociatedTokenAddress, findDelegatePDA } from "./scheme_b/execute";
 export type { ZKProofData, ExecuteParams, ExecuteResult, BuildProofDataParams } from "./scheme_b/execute";
 export { cancelInitiate, cancelMutual } from "./scheme_b/cancel";
 export { VersionSlotManager } from "./scheme_b/version_slots";

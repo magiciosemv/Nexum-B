@@ -2,7 +2,7 @@
  * Cross-language commitment hash consistency test.
  *
  * Verifies that TypeScript and Rust produce byte-for-byte identical
- * SHA-256 hashes for the same 120-byte input.
+ * SHA-256 hashes for the same 128-byte input (v3.1 two-way swap layout).
  *
  * CRITICAL: If this test fails, the entire Scheme B protocol breaks.
  */
@@ -11,8 +11,10 @@ import { computeCommitment, verifyCommitment } from "../sdk/src/crypto/commitmen
 
 // ── Test vector (identical to Rust test_cross_language_vector) ────────
 const NONCE = 12345678901234n;
-const TRANSFER_LO = 999999;
-const TRANSFER_HI = 0;
+const TRANSFER_A_LO = 999999;
+const TRANSFER_A_HI = 0;
+const TRANSFER_B_LO = 500000;
+const TRANSFER_B_HI = 0;
 const EXPIRY = 1714000000;
 
 // These pubkeys MUST match the Rust test exactly:
@@ -20,7 +22,6 @@ const EXPIRY = 1714000000;
 // EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
 // 9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM
 
-// Use the hex bytes from actual Solana pubkey encoding:
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < hex.length; i += 2) {
@@ -35,8 +36,10 @@ const COUNTERPARTY = hexToBytes("7e8c088760bfde1dddcf32c17f209b8242ee52aaf131fac
 
 const TEST_VECTOR = {
   nonce: NONCE,
-  transfer_amount_lo: TRANSFER_LO,
-  transfer_amount_hi: TRANSFER_HI,
+  transfer_a_lo: TRANSFER_A_LO,
+  transfer_a_hi: TRANSFER_A_HI,
+  transfer_b_lo: TRANSFER_B_LO,
+  transfer_b_hi: TRANSFER_B_HI,
   asset_a_mint: ASSET_A_MINT,
   asset_b_mint: ASSET_B_MINT,
   counterparty: COUNTERPARTY,
@@ -44,7 +47,7 @@ const TEST_VECTOR = {
 };
 
 // Expected hash from Rust side (MUST match exactly)
-const EXPECTED_HASH_HEX = "150563d21f589454d29ebaf8f13660b86477449674a4e0df4495e4f00d73e2db";
+const EXPECTED_HASH_HEX = "1c25fac0dfbd7ef191efed9c32f4671eedff5f2e710757fb56c9b79ad2dbaa2f";
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
@@ -91,26 +94,45 @@ async function runTests() {
     failed++;
   }
 
-  // ── Test 3: Different amounts → different hashes ────────────────────
+  // ── Test 3: Different transfer_a amounts → different hashes ─────────
   try {
     const h1 = await computeCommitment(TEST_VECTOR);
     const h2 = await computeCommitment({
       ...TEST_VECTOR,
-      transfer_amount_lo: TEST_VECTOR.transfer_amount_lo + 1,
+      transfer_a_lo: TEST_VECTOR.transfer_a_lo + 1,
     });
     if (bytesToHex(h1) !== bytesToHex(h2)) {
-      console.log("✅ PASS: Different amounts produce different hashes");
+      console.log("✅ PASS: Different transfer_a amounts produce different hashes");
       passed++;
     } else {
-      console.log("❌ FAIL: Different amounts produced same hash!");
+      console.log("❌ FAIL: Different transfer_a amounts produced same hash!");
       failed++;
     }
   } catch (e) {
-    console.log(`❌ FAIL: Amount test threw: ${e}`);
+    console.log(`❌ FAIL: transfer_a amount test threw: ${e}`);
     failed++;
   }
 
-  // ── Test 4: Different counterparty → different hashes ───────────────
+  // ── Test 4: Different transfer_b amounts → different hashes ─────────
+  try {
+    const h1 = await computeCommitment(TEST_VECTOR);
+    const h2 = await computeCommitment({
+      ...TEST_VECTOR,
+      transfer_b_lo: TEST_VECTOR.transfer_b_lo + 1,
+    });
+    if (bytesToHex(h1) !== bytesToHex(h2)) {
+      console.log("✅ PASS: Different transfer_b amounts produce different hashes");
+      passed++;
+    } else {
+      console.log("❌ FAIL: Different transfer_b amounts produced same hash!");
+      failed++;
+    }
+  } catch (e) {
+    console.log(`❌ FAIL: transfer_b amount test threw: ${e}`);
+    failed++;
+  }
+
+  // ── Test 5: Different counterparty → different hashes ───────────────
   try {
     const h1 = await computeCommitment(TEST_VECTOR);
     const differentCP = new Uint8Array(32);
@@ -131,7 +153,7 @@ async function runTests() {
     failed++;
   }
 
-  // ── Test 5: verifyCommitment returns true for matching hash ─────────
+  // ── Test 6: verifyCommitment returns true for matching hash ─────────
   try {
     const hash = await computeCommitment(TEST_VECTOR);
     const valid = await verifyCommitment(hash, TEST_VECTOR);
@@ -147,12 +169,12 @@ async function runTests() {
     failed++;
   }
 
-  // ── Test 6: verifyCommitment returns false for wrong amount ─────────
+  // ── Test 7: verifyCommitment returns false for wrong amount ─────────
   try {
     const hash = await computeCommitment(TEST_VECTOR);
     const valid = await verifyCommitment(hash, {
       ...TEST_VECTOR,
-      transfer_amount_lo: 888888,
+      transfer_a_lo: 888888,
     });
     if (!valid) {
       console.log("✅ PASS: verifyCommitment returns false for wrong amount");

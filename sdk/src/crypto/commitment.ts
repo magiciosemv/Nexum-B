@@ -1,19 +1,22 @@
 /**
- * Scheme B v3.0 Commitment Hash — TypeScript Implementation
+ * Scheme B v3.1 Commitment Hash — TypeScript Implementation
  *
  * MUST produce identical output to the Rust `compute_commitment_v3` function.
- * Input: 120 bytes → SHA-256 → 32 bytes
+ * Input: 128 bytes → SHA-256 → 32 bytes
  *
  * Layout:
- *   nonce(8B LE) + transfer_lo(4B LE) + transfer_hi(4B LE)
+ *   nonce(8B LE) + transfer_a_lo(4B LE) + transfer_a_hi(4B LE)
+ *   + transfer_b_lo(4B LE) + transfer_b_hi(4B LE)
  *   + asset_a_mint(32B) + asset_b_mint(32B) + counterparty(32B)
  *   + expiry_timestamp(8B LE)
  */
 
 export interface CommitmentParams {
   nonce: bigint;               // u64
-  transfer_amount_lo: number;  // u32
-  transfer_amount_hi: number;  // u32
+  transfer_a_lo: number;       // u32 — Party A → Party B amount low limb
+  transfer_a_hi: number;       // u32 — Party A → Party B amount high limb
+  transfer_b_lo: number;       // u32 — Party B → Party A amount low limb
+  transfer_b_hi: number;       // u32 — Party B → Party A amount high limb
   asset_a_mint: Uint8Array;    // 32 bytes
   asset_b_mint: Uint8Array;    // 32 bytes
   counterparty: Uint8Array;    // 32 bytes
@@ -21,8 +24,8 @@ export interface CommitmentParams {
 }
 
 /**
- * Compute the Scheme B v3.0 commitment hash.
- * 120-byte input → SHA-256 → 32-byte output.
+ * Compute the Scheme B v3.1 commitment hash (two-way swap).
+ * 128-byte input → SHA-256 → 32-byte output.
  *
  * Field order and byte widths MUST match the Rust implementation exactly.
  */
@@ -31,19 +34,27 @@ export async function computeCommitment(p: CommitmentParams): Promise<Uint8Array
   if (p.asset_b_mint.length !== 32) throw new Error("asset_b_mint must be 32 bytes");
   if (p.counterparty.length !== 32) throw new Error("counterparty must be 32 bytes");
 
-  const buf = new Uint8Array(120);
+  const buf = new Uint8Array(128);
   let off = 0;
 
   // nonce: u64 little-endian (8B)
   writeBigUInt64LE(buf, p.nonce, off);
   off += 8;
 
-  // transfer_amount_lo: u32 little-endian (4B)
-  writeUInt32LE(buf, p.transfer_amount_lo, off);
+  // transfer_a_lo: u32 little-endian (4B)
+  writeUInt32LE(buf, p.transfer_a_lo, off);
   off += 4;
 
-  // transfer_amount_hi: u32 little-endian (4B)
-  writeUInt32LE(buf, p.transfer_amount_hi, off);
+  // transfer_a_hi: u32 little-endian (4B)
+  writeUInt32LE(buf, p.transfer_a_hi, off);
+  off += 4;
+
+  // transfer_b_lo: u32 little-endian (4B)
+  writeUInt32LE(buf, p.transfer_b_lo, off);
+  off += 4;
+
+  // transfer_b_hi: u32 little-endian (4B)
+  writeUInt32LE(buf, p.transfer_b_hi, off);
   off += 4;
 
   // asset_a_mint (32B)
@@ -62,7 +73,7 @@ export async function computeCommitment(p: CommitmentParams): Promise<Uint8Array
   writeBigInt64LE(buf, BigInt(p.expiry_timestamp), off);
   off += 8;
 
-  if (off !== 120) throw new Error(`Buffer offset ${off}, expected 120`);
+  if (off !== 128) throw new Error(`Buffer offset ${off}, expected 128`);
 
   const hashBuf = await crypto.subtle.digest("SHA-256", buf);
   return new Uint8Array(hashBuf);

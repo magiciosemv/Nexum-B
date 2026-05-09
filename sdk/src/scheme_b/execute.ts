@@ -8,6 +8,10 @@
  *
  * All balance/amount values are PRIVATE in the ZK circuit.
  * Only commitment_hash_lo/hi are public inputs to the proof.
+ *
+ * SPL Token transfers happen atomically with settlement:
+ * - Party A sends transfer_amount_a of asset_a to Party B
+ * - Party B sends transfer_amount_b of asset_b to Party A (via delegate PDA)
  */
 
 import * as anchor from "@coral-xyz/anchor";
@@ -16,6 +20,27 @@ import { findLedgerPDA, findConfigPDA, findSettlementPDA, findProofDataPDA, spli
 import { encrypt as elgamalEncrypt, serializeCiphertext, Point } from "../crypto/elgamal";
 import { Groth16Proof, createPrivateCircuitInputs, splitHashToLimbs } from "../workers/prover";
 import { computeCommitment } from "../crypto/commitment";
+
+// ── SPL Token constants ─────────────────────────────────────────────
+const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+
+/** Derive associated token account address (no @solana/spl-token dependency). */
+export function findAssociatedTokenAddress(owner: PublicKey, mint: PublicKey): PublicKey {
+  const [ata] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  return ata;
+}
+
+/** Derive delegate PDA for Party B's token authority. */
+export function findDelegatePDA(commitSlotKey: PublicKey, programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("delegate"), commitSlotKey.toBuffer()],
+    programId
+  );
+}
 
 // ── Proof data structure ─────────────────────────────────────────────
 
@@ -31,7 +56,8 @@ export interface ZKProofData {
 
 export interface ExecuteParams {
   commit_slot_id: PublicKey;
-  transfer_amount: bigint;
+  transfer_amount_a: bigint;  // A→B amount (asset_a_mint)
+  transfer_amount_b: bigint;  // B→A amount (asset_b_mint)
   proof_a: ZKProofData;
   proof_b: ZKProofData;
 }
@@ -154,7 +180,18 @@ export async function executeSettle(
     program.programId
   );
 
-  const { lo: transfer_lo, hi: transfer_hi } = splitAmount(params.transfer_amount);
+  // ── Derive SPL token accounts ──────────────────────────────────────
+  const initiatorPk = new PublicKey(slot.initiator);
+  const counterpartyPk = new PublicKey(slot.counterparty);
+  const assetAMint = new PublicKey(slot.assetAMint);
+  const assetBMint = new PublicKey(slot.assetBMint);
+
+  const partyATokenA = findAssociatedTokenAddress(initiatorPk, assetAMint);
+  const partyBTokenA = findAssociatedTokenAddress(counterpartyPk, assetAMint);
+  const partyBTokenB = findAssociatedTokenAddress(counterpartyPk, assetBMint);
+  const partyATokenB = findAssociatedTokenAddress(initiatorPk, assetBMint);
+
+  const [delegatePda] = findDelegatePDA(params.commit_slot_id, program.programId);
 
   // ── Step 1: Create ProofData account ───────────────────────────────
   const sig1 = await program.methods
@@ -188,8 +225,7 @@ export async function executeSettle(
     writeSigs.push(sig);
   }
 
-  // ── Step 3: Execute settlement ─────────────────────────────────────
-  // Validate that proof data is present
+  // ── Step 3: Execute settlement with SPL token transfers ────────────
   if (!params.proof_a || !params.proof_b) {
     throw new Error("Real ZK proofs are required for execute (proof_a and proof_b must be provided)");
   }
@@ -200,6 +236,8 @@ export async function executeSettle(
       commitmentHashLo: new anchor.BN(params.proof_a.commitment_hash_lo.toString()),
       commitmentHashHi: new anchor.BN(params.proof_a.commitment_hash_hi.toString()),
       settlementNonce: new anchor.BN(settlementNonce.toString()),
+      transferAmountA: new anchor.BN(params.transfer_amount_a.toString()),
+      transferAmountB: new anchor.BN(params.transfer_amount_b.toString()),
     })
     .preInstructions([
       ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
@@ -214,6 +252,12 @@ export async function executeSettle(
       feePayer: wallet.publicKey,
       systemProgram: SystemProgram.programId,
       zkVerifierProgram: new PublicKey("6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN"),
+      partyATokenA: partyATokenA,
+      partyBTokenA: partyBTokenA,
+      partyBTokenB: partyBTokenB,
+      partyATokenB: partyATokenB,
+      delegate: delegatePda,
+      tokenProgram: TOKEN_PROGRAM_ID,
     })
     .rpc({ commitment: "confirmed" });
 

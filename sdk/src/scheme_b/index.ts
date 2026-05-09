@@ -198,6 +198,28 @@ export function findProofDataPDA(
   );
 }
 
+// ── SPL Token helpers ────────────────────────────────────────────────
+
+const TOKEN_PROGRAM_ID_CONST = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+const ASSOCIATED_TOKEN_PROGRAM_ID_CONST = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+
+/** Derive associated token account address. */
+export function findAssociatedTokenAddress(owner: PublicKey, mint: PublicKey): PublicKey {
+  const [ata] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID_CONST.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID_CONST
+  );
+  return ata;
+}
+
+/** Derive delegate PDA for Party B's token authority. Seeds: ["delegate", commit_slot_key]. */
+export function findDelegatePDA(commitSlotKey: PublicKey, programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("delegate"), commitSlotKey.toBuffer()],
+    programId
+  );
+}
+
 // ── Helper: split bigint amount into lo/hi u32 ──────────────────────
 
 export function splitAmount(amount: bigint): { lo: number; hi: number } {
