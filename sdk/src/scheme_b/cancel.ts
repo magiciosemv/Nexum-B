@@ -10,6 +10,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
 import { findLedgerPDA, findConfigPDA } from "./index";
+import { sendAndConfirmPolling } from "../utils/send_tx";
 
 // ── cancelInitiate ───────────────────────────────────────────────────
 
@@ -34,7 +35,7 @@ export async function cancelInitiate(
 
   const [configPda] = findConfigPDA(program.programId);
 
-  const sig = await program.methods
+  const tx = await program.methods
     .cancelInitiate()
     .accounts({
       s: wallet.publicKey,
@@ -42,8 +43,9 @@ export async function cancelInitiate(
       commitSlot: commitSlot,
       config: configPda,
     })
-    .rpc({ commitment: "confirmed" });
+    .transaction();
 
+  const sig = await sendAndConfirmPolling(program.provider.connection, wallet, tx);
   return sig;
 }
 
@@ -64,7 +66,7 @@ export async function cancelMutual(
   const [ledgerB] = findLedgerPDA(slot.counterparty, slot.assetBMint, program.programId);
   const [configPda] = findConfigPDA(program.programId);
 
-  const sig = await program.methods
+  const tx = await program.methods
     .cancelMutual()
     .accounts({
       caller: wallet.publicKey,
@@ -73,7 +75,8 @@ export async function cancelMutual(
       commitSlot: params.commit_slot_id,
       config: configPda,
     })
-    .rpc({ commitment: "confirmed" });
+    .transaction();
 
+  const sig = await sendAndConfirmPolling(program.provider.connection, wallet, tx);
   return sig;
 }

@@ -1,11 +1,12 @@
 /**
- * useSchemeB — React Hook for Scheme B Settlement Flow (Two-Way Swap)
+ * useSchemeB — React Hook for Scheme B Settlement Flow (Vault Model)
  *
  * Manages the full three-step state machine:
  * IDLE → INITIATING → WAITING_ACCEPT → BOTH_LOCKED → GENERATING_PROOF → SUBMITTING_EXECUTE → SETTLED
  *
  * Step 3 generates REAL ZK proofs in the browser via snarkjs WASM.
- * SPL tokens are transferred atomically: A→B (asset_a) and B→A (asset_b).
+ * Vault model: settlement only updates encrypted balances (no SPL transfers).
+ * Users must deposit tokens into vaults before settlement, withdraw after.
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -18,21 +19,21 @@ import {
   findConfigPDA,
   findSettlementPDA,
   findProofDataPDA,
-  findAssociatedTokenAddress,
-  findDelegatePDA,
+  findTreasuryVaultPDA,
   splitAmount,
 } from "@nexum/sdk";
 import { initiateCommit } from "@nexum/sdk";
 import { acceptCommit } from "@nexum/sdk";
+import { initializeVault } from "@nexum/sdk";
+import { deposit } from "@nexum/sdk";
+import { withdraw } from "@nexum/sdk";
 import { cancelInitiate as sdkCancelInitiate, cancelMutual as sdkCancelMutual } from "@nexum/sdk";
 import {
   generateKeypair,
   elgamalEncrypt,
   serializeCiphertext,
+  sendAndConfirmPolling,
 } from "@nexum/sdk";
-
-// ── SPL Token constants ─────────────────────────────────────────────
-const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
 // ── Browser-compatible ZK proof helpers ──────────────────────────────
 
@@ -154,9 +155,11 @@ export type CounterpartyState =
   | "ERROR";
 
 export interface SettlementTxs {
+  txInitiate: string;
   txCreateProof: string;
   txsWriteProof: string[];
   txExecute: string;
+  settlementRecord: string;
 }
 
 export interface SchemeBState {
@@ -164,6 +167,7 @@ export interface SchemeBState {
   countdown: number;
   commitSlotId: string;
   commitmentHash: string;
+  nonce: string;
   logs: string[];
   counterpartyState: CounterpartyState;
   hashValid: boolean | null;
@@ -174,11 +178,14 @@ export interface SchemeBState {
   executeSettlement: () => Promise<void>;
   cancelInitiate: () => Promise<void>;
   cancelMutual: () => Promise<void>;
-  forceCancel: () => Promise<void>;
+  forceCancel: (mintA?: string) => Promise<void>;
+  ensureVault: (mint: string) => Promise<string>;
+  depositToVault: (mint: string, amount: bigint) => Promise<string>;
+  withdrawFromVault: (mint: string, amount: bigint) => Promise<string>;
   error: string | null;
 }
 
-const ZK_VERIFIER_ID = new PublicKey("6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN");
+const ZK_VERIFIER_ID = new PublicKey("HBjtDNTL5cj6oc97Gno14x8GjL6LNsZ26iRK4v52KjDA");
 
 export function useSchemeB(
   program: anchor.Program | null,
@@ -189,10 +196,12 @@ export function useSchemeB(
   const [countdown, setCountdown] = useState(60);
   const [commitSlotId, setCommitSlotId] = useState("");
   const [commitmentHash, setCommitmentHash] = useState("");
+  const [nonce, setNonce] = useState("");
   const [logs, setLogs] = useState<string[]>([]);
   const [hashValid, setHashValid] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastTxHash, setLastTxHash] = useState("");
+  const initiateTxRef = useRef<string>("");
   const [settlementTxs, setSettlementTxs] = useState<SettlementTxs | null>(null);
 
   const pendingParams = useRef<{
@@ -206,6 +215,8 @@ export function useSchemeB(
     nonce: bigint;
     expiry: number;
   } | null>(null);
+
+  const executeSettlementRef = useRef<(() => Promise<void>) | null>(null);
 
   const countdownRef = useRef<ReturnType<typeof setInterval>>();
 
@@ -232,6 +243,8 @@ export function useSchemeB(
     if (!program || !wallet) return;
     setError(null);
     setInitiatorState("GENERATING_HASH");
+    log(`Program ID: ${program.programId.toBase58()}`);
+    log(`Wallet: ${wallet.publicKey.toBase58()}`);
     log("Computing commitment hash (two-way swap)...");
 
     try {
@@ -246,7 +259,7 @@ export function useSchemeB(
       if (!ledgerInfo) {
         log("Creating Ledger A (first time for this mint)...");
         const [configPda] = findConfigPDA(program.programId);
-        await program.methods
+        const ledgerTx = await program.methods
           .createUserLedger()
           .accounts({
             owner: wallet.publicKey,
@@ -255,7 +268,8 @@ export function useSchemeB(
             config: configPda,
             systemProgram: SystemProgram.programId,
           })
-          .rpc();
+          .transaction();
+        await sendAndConfirmPolling(program.provider.connection, wallet, ledgerTx);
         log("✓ Ledger A created");
       }
 
@@ -289,7 +303,9 @@ export function useSchemeB(
 
           log(`✓ Initiate committed — TX: ${txHash}`);
           setLastTxHash(txHash);
+          initiateTxRef.current = txHash;
           setCommitSlotId(csPda.toBase58());
+          setNonce(rawNonce.toString());
           pendingParams.current = {
             ledgerA,
             commitSlotId: csPda,
@@ -329,6 +345,9 @@ export function useSchemeB(
                 } catch {
                   log("✓ Dual-lock confirmed — both ledgers secured.");
                 }
+                // Auto-execute: Party A must sign the A→B transfer
+                log("Auto-triggering settlement execution...");
+                setTimeout(() => executeSettlementRef.current?.(), 1000);
               }
             } catch { /* retry */ }
           }, 3000);
@@ -343,6 +362,7 @@ export function useSchemeB(
       setLastTxHash(result.tx_signature);
       setCommitmentHash(hexHash);
       setCommitSlotId(result.commit_slot_id.toBase58());
+      setNonce(result.nonce.toString());
       pendingParams.current = {
         ledgerA: result.ledger_a,
         commitSlotId: result.commit_slot_id,
@@ -379,6 +399,9 @@ export function useSchemeB(
             clearInterval(countdownRef.current);
             setInitiatorState("BOTH_LOCKED");
             log("Counterparty accepted! Both ledgers locked.");
+            // Auto-execute: Party A must sign the A→B transfer
+            log("Auto-triggering settlement execution...");
+            setTimeout(() => executeSettlementRef.current?.(), 1000);
           }
         } catch { /* retry */ }
       }, 3000);
@@ -424,7 +447,7 @@ export function useSchemeB(
         return;
       }
 
-      log("Hash verified. Submitting accept_commit (with delegate approval)...");
+      log("Hash verified. Submitting accept_commit...");
       setCounterpartyState("SUBMITTING_ACCEPT");
 
       await acceptCommit(program, wallet, {
@@ -435,7 +458,7 @@ export function useSchemeB(
 
       clearInterval(countdownRef.current);
       setInitiatorState("BOTH_LOCKED");
-      log("Both locked. Delegate approved for B→A transfer. Ready for ZK proof execution.");
+      log("Both locked. Ready for ZK proof execution (encrypted balance update).");
     } catch (err: any) {
       setError(err.message);
       setCounterpartyState("ERROR");
@@ -479,6 +502,24 @@ export function useSchemeB(
       const keypairA = generateKeypair();
       const keypairB = generateKeypair();
       log("✓ ElGamal keypairs generated");
+
+      // Save private keys to localStorage so regulator can decrypt later
+      const elgamalKeys = {
+        keyA: keypairA.privateKey.toString(),
+        keyB: keypairB.privateKey.toString(),
+        partyA: wallet.publicKey.toBase58(),
+        partyB: p.counterparty.toBase58(),
+        mintA: p.assetAMint.toBase58(),
+        mintB: p.assetBMint.toBase58(),
+        savedAt: new Date().toISOString(),
+      };
+      localStorage.setItem('nexum_elgamal_keys', JSON.stringify(elgamalKeys));
+      log("✓ ElGamal private keys saved to localStorage (for regulator decryption)");
+      log(`  Key A (Party A): ${keypairA.privateKey.toString().slice(0, 20)}...`);
+      log(`  Key B (Party B): ${keypairB.privateKey.toString().slice(0, 20)}...`);
+      console.log('[Nexum] ElGamal private keys (copy for regulator):');
+      console.log('  Key A:', keypairA.privateKey.toString());
+      console.log('  Key B:', keypairB.privateKey.toString());
 
       const { lo: b_lo, hi: b_hi } = splitAmount(p.amountB);
 
@@ -538,121 +579,87 @@ export function useSchemeB(
       const [configPda] = findConfigPDA(program.programId);
       const [proofDataPda] = findProofDataPDA(slotNonce, program.programId);
 
-      const sendTx = async (rpcCall: () => Promise<string>, label: string): Promise<string> => {
-        try {
-          return await rpcCall();
-        } catch (err: any) {
-          if (err.message?.includes("already been processed") || err.message?.includes("already processed")) {
-            log(`${label}: already submitted, confirming...`);
-            await new Promise(r => setTimeout(r, 3000));
-            try {
-              const sigs = await program.provider.connection.getSignaturesForAddress(proofDataPda, { limit: 1 });
-              if (sigs && sigs.length > 0) return sigs[0].signature;
-            } catch { /* ignore */ }
-            return "confirmed";
-          }
-          throw err;
-        }
-      };
-
       log("Creating ProofData account on-chain...");
-      const sig3a = await sendTx(async () =>
-        program.methods
+      let sig3a: string;
+      const existingPD = await program.provider.connection.getAccountInfo(proofDataPda);
+      if (existingPD) {
+        sig3a = "already-exists";
+        log("ProofData already exists (from script), reusing...");
+      } else {
+        const tx1 = await program.methods
           .createProofData({ nonce: new anchor.BN(slotNonce.toString()) })
           .accounts({
             proofData: proofDataPda,
             authority: wallet.publicKey,
             systemProgram: SystemProgram.programId,
           })
-          .rpc({ commitment: "confirmed" }),
-        "CreateProof"
-      );
-      log(`✓ ProofData created — TX: ${sig3a}`);
+          .transaction();
+        sig3a = await sendAndConfirmPolling(program.provider.connection, wallet, tx1);
+      }
+      log(`✓ ProofData ready — TX: ${sig3a}`);
 
       const chunks = [chunk0, chunk1, chunk2, chunk3];
       const chunkSigs: string[] = [];
       for (let i = 0; i < 4; i++) {
         log(`Writing proof chunk ${i}/3 (${chunks[i].length} bytes)...`);
         const chunkIdx = i;
-        const sig = await sendTx(async () =>
-          program.methods
-            .writeProofData({
-              nonce: new anchor.BN(slotNonce.toString()),
-              chunkIndex: chunkIdx,
-              data: Buffer.from(chunks[chunkIdx]),
-            })
-            .accounts({
-              proofData: proofDataPda,
-              authority: wallet.publicKey,
-            })
-            .rpc({ commitment: "confirmed" }),
-          `Chunk ${chunkIdx}`
-        );
+        const tx = await program.methods
+          .writeProofData({
+            nonce: new anchor.BN(slotNonce.toString()),
+            chunkIndex: chunkIdx,
+            data: Buffer.from(chunks[chunkIdx]),
+          })
+          .accounts({
+            proofData: proofDataPda,
+            authority: wallet.publicKey,
+          })
+          .transaction();
+        const sig = await sendAndConfirmPolling(program.provider.connection, wallet, tx);
         chunkSigs.push(sig);
         log(`✓ Chunk ${i}/3 written — TX: ${sig}`);
       }
 
-      // Step 3c: Execute settlement with SPL token transfers
-      log("Executing settlement (ZK + SPL token transfers, 400K CU)...");
+      // Step 3c: Execute settlement (vault model — encrypted balance update only)
+      log("Executing settlement (ZK verification + encrypted balance update, 400K CU)...");
       const settlementNonce = BigInt(Date.now());
       const [settlementPda] = findSettlementPDA(p.commitSlotId, settlementNonce, program.programId);
 
-      // Derive SPL token accounts
-      const initiatorPk = slotData.initiator;
-      const counterpartyPk = slotData.counterparty;
-      const assetAMintPk = slotData.assetAMint;
-      const assetBMintPk = slotData.assetBMint;
-
-      const partyATokenA = findAssociatedTokenAddress(initiatorPk, assetAMintPk);
-      const partyBTokenA = findAssociatedTokenAddress(counterpartyPk, assetAMintPk);
-      const partyBTokenB = findAssociatedTokenAddress(counterpartyPk, assetBMintPk);
-      const partyATokenB = findAssociatedTokenAddress(initiatorPk, assetBMintPk);
-      const [delegatePda] = findDelegatePDA(p.commitSlotId, program.programId);
-
-      const sig3c = await sendTx(async () =>
-        program.methods
-          .executeSettleB({
-            nonce: new anchor.BN(slotNonce.toString()),
-            commitmentHashLo: new anchor.BN(proofA.publicSignals[0]),
-            commitmentHashHi: new anchor.BN(proofA.publicSignals[1]),
-            settlementNonce: new anchor.BN(settlementNonce.toString()),
-            transferAmountA: new anchor.BN(p.amountA.toString()),
-            transferAmountB: new anchor.BN(p.amountB.toString()),
-          })
-          .preInstructions([
-            ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
-          ])
-          .accounts({
-            ledgerA: ledgerA,
-            ledgerB: ledgerB,
-            commitSlot: p.commitSlotId,
-            proofData: proofDataPda,
-            settlementRecord: settlementPda,
-            config: configPda,
-            feePayer: wallet.publicKey,
-            systemProgram: SystemProgram.programId,
-            zkVerifierProgram: ZK_VERIFIER_ID,
-            partyATokenA: partyATokenA,
-            partyBTokenA: partyBTokenA,
-            partyBTokenB: partyBTokenB,
-            partyATokenB: partyATokenB,
-            delegate: delegatePda,
-            tokenProgram: TOKEN_PROGRAM_ID,
-          })
-          .rpc({ commitment: "confirmed" }),
-        "Execute"
-      );
+      const tx2 = await program.methods
+        .executeSettleB({
+          nonce: new anchor.BN(slotNonce.toString()),
+          commitmentHashLo: new anchor.BN(proofA.publicSignals[0]),
+          commitmentHashHi: new anchor.BN(proofA.publicSignals[1]),
+          settlementNonce: new anchor.BN(settlementNonce.toString()),
+        })
+        .preInstructions([
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+        ])
+        .accounts({
+          ledgerA: ledgerA,
+          ledgerB: ledgerB,
+          commitSlot: p.commitSlotId,
+          proofData: proofDataPda,
+          settlementRecord: settlementPda,
+          config: configPda,
+          feePayer: wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+          zkVerifierProgram: ZK_VERIFIER_ID,
+        })
+        .transaction();
+      const sig3c = await sendAndConfirmPolling(program.provider.connection, wallet, tx2);
 
       log(`✓ SETTLEMENT EXECUTED — TX: ${sig3c}`);
-      log(`  A→B: ${p.amountA} of asset_a, B→A: ${p.amountB} of asset_b`);
+      log(`  Encrypted balances updated. Amounts are private (visible only to key holders).`);
       setLastTxHash(sig3c);
       setSettlementTxs({
+        txInitiate: initiateTxRef.current,
         txCreateProof: sig3a,
         txsWriteProof: chunkSigs,
         txExecute: sig3c,
+        settlementRecord: settlementPda.toBase58(),
       });
       setInitiatorState("SETTLED");
-      log("Settlement complete! Both ledgers returned to Active. Tokens transferred.");
+      log("Settlement complete! Both ledgers returned to Active. Vault balances updated.");
 
     } catch (err: any) {
       setError(err.message);
@@ -662,11 +669,11 @@ export function useSchemeB(
   }, [program, wallet, log]);
 
   // ── Force cancel ──────────────────────────────────────────────────
-  const forceCancel = useCallback(async () => {
+  const forceCancel = useCallback(async (mintA?: string) => {
     if (!program || !wallet) return;
     try {
       log("Reading ledger state from chain...");
-      const mintAPubkey = new PublicKey("B31JoQhMFF2TrSJMdiSqCRGMj4jR8TD8sNzNGn4T4qQw");
+      const mintAPubkey = new PublicKey(mintA || "DkMziJhKEnedc8KBXgVnGkdShTJSHn9fk8NTMoFm33fC");
       const [ledgerA] = findLedgerPDA(wallet.publicKey, mintAPubkey, program.programId);
       const info = await program.provider.connection.getAccountInfo(ledgerA);
       if (!info) { setError("Ledger not found on chain"); return; }
@@ -725,17 +732,71 @@ export function useSchemeB(
     }
   }, [program, wallet, log]);
 
+  // ── Vault Management ───────────────────────────────────────────────
+
+  const ensureVault = useCallback(async (mintStr: string): Promise<string> => {
+    if (!program || !wallet) throw new Error("Wallet not connected");
+    const mint = new PublicKey(mintStr);
+    const [vaultPda] = findTreasuryVaultPDA(mint, program.programId);
+    const existing = await program.provider.connection.getAccountInfo(vaultPda);
+    if (existing) {
+      log(`Vault already exists: ${vaultPda.toBase58().slice(0, 8)}...`);
+      return vaultPda.toBase58();
+    }
+    log("Initializing shared treasury vault...");
+    const result = await initializeVault(program, wallet, { mint });
+    log(`✓ Vault created — TX: ${result.tx_signature}`);
+    return result.vault.toBase58();
+  }, [program, wallet, log]);
+
+  const depositToVault = useCallback(async (mintStr: string, amount: bigint): Promise<string> => {
+    if (!program || !wallet) throw new Error("Wallet not connected");
+    const mint = new PublicKey(mintStr);
+    // Auto-create vault if it doesn't exist
+    const [vaultPda] = findTreasuryVaultPDA(mint, program.programId);
+    const existing = await program.provider.connection.getAccountInfo(vaultPda);
+    if (!existing) {
+      log("Creating vault for this mint (first time)...");
+      try {
+        await initializeVault(program, wallet, { mint });
+        log("✓ Vault created");
+      } catch (e: any) {
+        log(`Vault creation failed: ${e.message}`);
+        throw e;
+      }
+    }
+    log(`Depositing ${amount} tokens to vault...`);
+    const result = await deposit(program, wallet, { mint, amount });
+    log(`✓ Deposited — TX: ${result.tx_signature}`);
+    return result.tx_signature;
+  }, [program, wallet, log]);
+
+  const withdrawFromVault = useCallback(async (mintStr: string, amount: bigint): Promise<string> => {
+    if (!program || !wallet) throw new Error("Wallet not connected");
+    const mint = new PublicKey(mintStr);
+    log(`Withdrawing ${amount} tokens from vault...`);
+    const result = await withdraw(program, wallet, { mint, amount });
+    log(`✓ Withdrawn — TX: ${result.tx_signature}`);
+    return result.tx_signature;
+  }, [program, wallet, log]);
+
   useEffect(() => {
     return () => {
       if (countdownRef.current) clearInterval(countdownRef.current);
     };
   }, []);
 
+  // Keep ref in sync for auto-execute from polling callback
+  useEffect(() => {
+    executeSettlementRef.current = executeSettlement;
+  }, [executeSettlement]);
+
   return {
     initiatorState,
     countdown,
     commitSlotId,
     commitmentHash,
+    nonce,
     logs,
     counterpartyState,
     hashValid,
@@ -747,6 +808,9 @@ export function useSchemeB(
     cancelInitiate: cancelInitiateAction,
     cancelMutual: cancelMutualAction,
     forceCancel,
+    ensureVault,
+    depositToVault,
+    withdrawFromVault,
     error,
   };
 }

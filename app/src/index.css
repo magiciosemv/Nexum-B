@@ -122,6 +122,10 @@ input{font-family:inherit;color:inherit}
 ::-webkit-scrollbar-thumb{background:var(--line-2);border:2px solid var(--bg)}
 ::-webkit-scrollbar-thumb:hover{background:var(--line-3)}
 
+/* hidden scrollbar — scrollable but no visible bar */
+.no-scrollbar::-webkit-scrollbar{display:none}
+.no-scrollbar{scrollbar-width:none;-ms-overflow-style:none}
+
 /* Tailwind layer overrides — keep Tailwind for utility helpers */
 @layer base {
   body {

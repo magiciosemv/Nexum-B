@@ -1,8 +1,9 @@
 /**
- * scheme_b_basic.ts — E2E Test: Full Scheme B Two-Way Swap with Real SPL Tokens
+ * scheme_b_basic.ts — E2E Test: Full Scheme B Two-Way Swap (Vault Model)
  *
- * Tests: initiate_commit → accept_commit (with delegate approve) → execute_settle_b (with CPI transfers)
- * Uses real Groth16 proofs, ElGamal ciphertexts, and SPL token transfers.
+ * Tests: initiate_commit → accept_commit → execute_settle_b
+ * Uses real Groth16 proofs and ElGamal ciphertexts.
+ * Vault model: settlement only updates encrypted balances (no SPL transfers).
  *
  * Party A sends transfer_amount_a of asset_a to Party B.
  * Party B sends transfer_amount_b of asset_b to Party A.
@@ -17,9 +18,9 @@ import {
   PublicKey, Keypair, SystemProgram, LAMPORTS_PER_SOL, ComputeBudgetProgram,
 } from "@solana/web3.js";
 import {
-  createMint, mintTo, createAccount, getAccount,
+  createMint, mintTo, getAccount,
   createAssociatedTokenAccount,
-  TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync,
+  TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import { assert } from "chai";
 import { computeCommitment } from "../../sdk/src/crypto/commitment";
@@ -29,7 +30,6 @@ import {
   findConfigPDA,
   findSettlementPDA,
   findProofDataPDA,
-  findDelegatePDA,
   splitAmount,
 } from "../../sdk/src/scheme_b/index";
 import { ProverManager, createPrivateCircuitInputs } from "../../sdk/src/workers/prover";
@@ -40,7 +40,7 @@ import {
 } from "../../sdk/src/crypto/elgamal";
 import path from "path";
 
-const ZK_VERIFIER_ID = new PublicKey("6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN");
+const ZK_VERIFIER_ID = new PublicKey("HBjtDNTL5cj6oc97Gno14x8GjL6LNsZ26iRK4v52KjDA");
 
 describe("Scheme B — Two-Way Swap with Real SPL Tokens", () => {
   const provider = anchor.AnchorProvider.env();
@@ -264,9 +264,7 @@ describe("Scheme B — Two-Way Swap with Real SPL Tokens", () => {
     assert.equal(slot.counterparty.toBase58(), counterparty.publicKey.toBase58());
   });
 
-  it("Step 2: Counterparty accepts (with delegate approval)", async () => {
-    const [delegatePda] = findDelegatePDA(commitSlotPda, program.programId);
-
+  it("Step 2: Counterparty accepts (vault model — no delegate)", async () => {
     await program.methods
       .acceptCommit()
       .accounts({
@@ -275,9 +273,6 @@ describe("Scheme B — Two-Way Swap with Real SPL Tokens", () => {
         ledgerB: ledgerB,
         commitSlot: commitSlotPda,
         config: configPda,
-        partyBToken: partyBTokenB,
-        delegate: delegatePda,
-        tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([counterparty])
       .rpc();
@@ -285,22 +280,10 @@ describe("Scheme B — Two-Way Swap with Real SPL Tokens", () => {
     const slot = await program.account.commitSlot.fetch(commitSlotPda);
     assert.exists(slot.bothLockedAt);
     assert.exists(slot.executeExpiry);
-
-    // Verify delegate was approved on Party B's token account
-    const tokenAcc = await getAccount(provider.connection, partyBTokenB);
-    assert.equal(tokenAcc.delegate.toBase58(), delegatePda.toBase58(), "Delegate PDA must be approved");
-    console.log("  Delegate approved:", delegatePda.toBase58());
+    console.log("  Both ledgers locked. Execute window started.");
   });
 
-  it("Step 3: Execute settlement with SPL token transfers", async () => {
-    // ── Record balances before ──────────────────────────────────────
-    const balABefore = (await getAccount(provider.connection, partyATokenA)).amount;
-    const balBBeforeA = (await getAccount(provider.connection, partyBTokenA)).amount;
-    const balBBeforeB = (await getAccount(provider.connection, partyBTokenB)).amount;
-    const balABeforeB = (await getAccount(provider.connection, partyATokenB)).amount;
-    console.log("  Before: A has", balABefore.toString(), "of mintA,", balABeforeB.toString(), "of mintB");
-    console.log("  Before: B has", balBBeforeA.toString(), "of mintA,", balBBeforeB.toString(), "of mintB");
-
+  it("Step 3: Execute settlement (ZK proofs + encrypted balance update)", async () => {
     const { lo: a_lo, hi: a_hi } = splitAmount(transferAmountA);
     const { lo: b_lo, hi: b_hi } = splitAmount(transferAmountB);
 
@@ -417,21 +400,16 @@ describe("Scheme B — Two-Way Swap with Real SPL Tokens", () => {
         .rpc();
     }
 
-    // ── Execute with SPL transfers ──────────────────────────────────
+    // ── Execute settlement (vault model — no SPL transfers) ─────────
     const settlementNonce = BigInt(Date.now());
     const [settlementPda] = findSettlementPDA(commitSlotPda, settlementNonce, program.programId);
-    const [delegatePda] = findDelegatePDA(commitSlotPda, program.programId);
 
-    // initiator must be fee_payer because they own partyATokenA and the
-    // on-chain code uses fee_payer as authority for A→B transfer.
     await program.methods
       .executeSettleB({
         nonce: new anchor.BN(nonce.toString()),
         commitmentHashLo: new anchor.BN(proofA.public_signals[0]),
         commitmentHashHi: new anchor.BN(proofA.public_signals[1]),
         settlementNonce: new anchor.BN(settlementNonce.toString()),
-        transferAmountA: new anchor.BN(transferAmountA.toString()),
-        transferAmountB: new anchor.BN(transferAmountB.toString()),
       })
       .preInstructions([
         ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
@@ -443,46 +421,29 @@ describe("Scheme B — Two-Way Swap with Real SPL Tokens", () => {
         proofData: proofDataPda,
         settlementRecord: settlementPda,
         config: configPda,
-        feePayer: initiator.publicKey,
+        feePayer: provider.wallet.publicKey,
         systemProgram: SystemProgram.programId,
         zkVerifierProgram: ZK_VERIFIER_ID,
-        partyATokenA: partyATokenA,
-        partyBTokenA: partyBTokenA,
-        partyBTokenB: partyBTokenB,
-        partyATokenB: partyATokenB,
-        delegate: delegatePda,
-        tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .signers([initiator])
       .rpc();
 
     // ── Verify settlement record ────────────────────────────────────
     const record = await program.account.settlementRecord.fetch(settlementPda);
     assert.deepEqual(record.scheme, { schemeB: {} });
 
-    // ── Verify token balances changed ───────────────────────────────
-    const balAAfter = (await getAccount(provider.connection, partyATokenA)).amount;
-    const balBAfterA = (await getAccount(provider.connection, partyBTokenA)).amount;
-    const balBAfterB = (await getAccount(provider.connection, partyBTokenB)).amount;
-    const balAAfterB = (await getAccount(provider.connection, partyATokenB)).amount;
-
-    console.log("  After:  A has", balAAfter.toString(), "of mintA,", balAAfterB.toString(), "of mintB");
-    console.log("  After:  B has", balBAfterA.toString(), "of mintA,", balBAfterB.toString(), "of mintB");
-
-    // A sent transferAmountA of mintA to B
-    assert.equal(balAAfter, balABefore - transferAmountA, "A must lose transferAmountA of mintA");
-    assert.equal(balBAfterA, balBBeforeA + transferAmountA, "B must gain transferAmountA of mintA");
-
-    // B sent transferAmountB of mintB to A
-    assert.equal(balBAfterB, balBBeforeB - transferAmountB, "B must lose transferAmountB of mintB");
-    assert.equal(balAAfterB, balABeforeB + transferAmountB, "A must gain transferAmountB of mintB");
-
-    // Verify ledgers back to Active
+    // ── Verify ledgers back to Active ───────────────────────────────
     const la = await program.account.userLedger.fetch(ledgerA);
     const lb = await program.account.userLedger.fetch(ledgerB);
     assert.deepEqual(la.status as any, { active: {} });
     assert.deepEqual(lb.status as any, { active: {} });
 
-    console.log("  ✓ Two-way swap verified: A→B", transferAmountA.toString(), "mintA, B→A", transferAmountB.toString(), "mintB");
+    // ── Verify SPL token balances unchanged (vault model) ───────────
+    const balAAfter = (await getAccount(provider.connection, partyATokenA)).amount;
+    const balBAfterB = (await getAccount(provider.connection, partyBTokenB)).amount;
+    assert.equal(balAAfter.toString(), "10000000", "SPL balances unchanged (settlement only updates encrypted balances)");
+    assert.equal(balBAfterB.toString(), "10000000", "SPL balances unchanged (settlement only updates encrypted balances)");
+
+    console.log("  ✓ Settlement executed: ZK proofs verified, encrypted balances updated");
+    console.log("  ✓ SPL balances unchanged (vault model — no on-chain transfers)");
   });
 });

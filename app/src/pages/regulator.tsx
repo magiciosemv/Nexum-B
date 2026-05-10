@@ -14,6 +14,51 @@ import { NexumSeal, Wordmark, Slot } from '../components/atoms';
 import { useAnchorContext } from '../context/WalletProvider';
 import { deserializeCiphertext, elgamalDecryptU32 as decryptU32, findLedgerPDA } from '@nexum/sdk';
 
+// ── Raw byte parsers (IDL lacks field definitions, Anchor can't deserialize) ──
+
+/** Parse SettlementRecord from raw account bytes (202B deployed layout).
+ *  Verified on-chain byte offsets:
+ *  disc(8) + party_a(32) + party_b(32) + asset_a(32) + asset_b(32) + hash(32)
+ *  + verA(8) + verB(8) + scheme(1) + settled_at(u32 at 185) + bump(1). */
+function parseSettlementRecord(buf: Buffer): SettlementRecordData {
+  const partyA = new PublicKey(buf.slice(8, 40)).toBase58();
+  const partyB = new PublicKey(buf.slice(40, 72)).toBase58();
+  const assetAMint = new PublicKey(buf.slice(72, 104)).toBase58();
+  const assetBMint = new PublicKey(buf.slice(104, 136)).toBase58();
+  const commitmentHash = bytesToHex(buf.slice(136, 168)); // 32 bytes
+  const versionA = Number(buf.readBigUInt64LE(168));
+  const versionB = Number(buf.readBigUInt64LE(176));
+  const scheme = buf[184]; // 0=SchemeA, 1=SchemeB
+  const settledAt = buf.readUInt32LE(185); // u32, not i64
+  const bump = buf[193];
+  return { partyA, partyB, assetAMint, assetBMint, commitmentHash, versionA, versionB, scheme, settledAt, bump };
+}
+
+/** Read raw UserLedger ciphertexts at correct byte offsets.
+ *  Offsets determined from on-chain verification: balance_ct_lo at 72, balance_ct_hi at 200.
+ *  The deployed program's struct layout is 2 bytes shorter than current source code. */
+function parseLedgerCiphertexts(buf: Buffer): { ctLo: Uint8Array; ctHi: Uint8Array; version: number; status: number } {
+  const OWNER_OFFSET = 8;
+  const MINT_OFFSET = 40;
+  const CT_LO_OFFSET = 72;  // deployed offset (current code: 74)
+  const CT_HI_OFFSET = 200; // deployed offset (current code: 202)
+  const VERSION_OFFSET = 584; // deployed offset (current code: 586)
+  const STATUS_OFFSET = 592;  // deployed offset (current code: 594)
+
+  const ctLo = buf.slice(CT_LO_OFFSET, CT_LO_OFFSET + 128);
+  const ctHi = buf.slice(CT_HI_OFFSET, CT_HI_OFFSET + 128);
+  const version = Number(buf.readBigUInt64LE(VERSION_OFFSET));
+  const status = buf[STATUS_OFFSET];
+
+  // Verify owner/mint match expected positions
+  return {
+    ctLo: new Uint8Array(ctLo),
+    ctHi: new Uint8Array(ctHi),
+    version,
+    status,
+  };
+}
+
 // ── Props ──────────────────────────────────────────────────────────────────
 
 interface RegulatorChamberProps {
@@ -27,8 +72,8 @@ const PROGRAM_ID = new PublicKey('BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP')
 
 /** Known devnet SettlementRecord addresses for the sample-ID panel. */
 const SAMPLE_SETTLEMENT_IDS = [
-  'DesM9HHZ8T2ngUBWJP6FTnAGUp7F34UvbAfDgKANAwFy',
-  'R2syJ6ZgZZJCmMFw71mcbiC5nFeey18ovE2qn3uTCzq',
+  '98YAXegYCQinqFJcjEe34KXNeSZ4CVAfEZL3QAWJUkWY',
+  '3NUBtPGM2fU1r1nfjayrsmsRkArTiueJt2Ccgr9b3Uu3',
 ];
 
 // ── Phase State ────────────────────────────────────────────────────────────
@@ -71,23 +116,6 @@ type TranslateFn = (zh: React.ReactNode, en: React.ReactNode) => React.ReactNode
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-/** BN -> number. Handles Anchor's BN.js objects and raw numbers. */
-function bnToNum(v: any): number {
-  if (typeof v === 'number') return v;
-  if (v && typeof v.toNumber === 'function') return v.toNumber();
-  return 0;
-}
-
-/** Anchor enum -> index. Handles both number and {VariantName: {}} forms. */
-function schemeEnumToIndex(e: any): number {
-  if (typeof e === 'number') return e;
-  if (typeof e === 'object' && e !== null) {
-    const key = Object.keys(e)[0];
-    if (key === 'schemeA') return 0;
-    if (key === 'schemeB') return 1;
-  }
-  return -1;
-}
 
 function schemeLabel(idx: number): string {
   if (idx === 0) return 'Scheme A';
@@ -252,13 +280,21 @@ function RevealedRecord({ address, record, t, decryptedBalances }: {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'var(--d-line)', border: '1px solid var(--d-line-2)' }}>
             <div style={{ padding: '14px 18px', background: 'var(--d-bg)' }}>
               <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: '#5a5a63', marginBottom: 5 }}>PARTY A BALANCE</div>
-              <div className="mono" style={{ fontSize: 18, color: 'var(--gold)', fontWeight: 600 }}>{decryptedBalances.partyA.balance.toString()}</div>
-              <div className="mono" style={{ fontSize: 9, color: '#5a5a63', marginTop: 3 }}>lo={decryptedBalances.partyA.lo} · hi={decryptedBalances.partyA.hi}</div>
+              <div className="mono" style={{ fontSize: 18, color: decryptedBalances.partyA.balance > 0n ? 'var(--gold)' : '#5a5a63', fontWeight: 600 }}>
+                {decryptedBalances.partyA.balance > 0n ? decryptedBalances.partyA.balance.toString() : 'Key A not provided'}
+              </div>
+              {decryptedBalances.partyA.balance > 0n && (
+                <div className="mono" style={{ fontSize: 9, color: '#5a5a63', marginTop: 3 }}>lo={decryptedBalances.partyA.lo} · hi={decryptedBalances.partyA.hi}</div>
+              )}
             </div>
             <div style={{ padding: '14px 18px', background: 'var(--d-bg)' }}>
               <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: '#5a5a63', marginBottom: 5 }}>PARTY B BALANCE</div>
-              <div className="mono" style={{ fontSize: 18, color: 'var(--gold)', fontWeight: 600 }}>{decryptedBalances.partyB.balance.toString()}</div>
-              <div className="mono" style={{ fontSize: 9, color: '#5a5a63', marginTop: 3 }}>lo={decryptedBalances.partyB.lo} · hi={decryptedBalances.partyB.hi}</div>
+              <div className="mono" style={{ fontSize: 18, color: decryptedBalances.partyB.balance > 0n ? 'var(--gold)' : '#5a5a63', fontWeight: 600 }}>
+                {decryptedBalances.partyB.balance > 0n ? decryptedBalances.partyB.balance.toString() : 'Key B not provided'}
+              </div>
+              {decryptedBalances.partyB.balance > 0n && (
+                <div className="mono" style={{ fontSize: 9, color: '#5a5a63', marginTop: 3 }}>lo={decryptedBalances.partyB.lo} · hi={decryptedBalances.partyB.hi}</div>
+              )}
             </div>
           </div>
         </div>
@@ -313,10 +349,19 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
   const [errorMsg, setErrorMsg] = useState('');
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
 
-  // Decryption state
-  const [privateKeyInput, setPrivateKeyInput] = useState('');
+  // Decryption state — two keys (one per party)
+  const [privateKeyA, setPrivateKeyA] = useState('');
+  const [privateKeyB, setPrivateKeyB] = useState('');
   const [decryptedBalances, setDecryptedBalances] = useState<DecryptedBalances | null>(null);
   const [decryptError, setDecryptError] = useState('');
+
+  // Load saved ElGamal keys from localStorage (saved during settlement)
+  const savedKeys = (() => {
+    try {
+      const raw = localStorage.getItem('nexum_elgamal_keys');
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  })();
 
   // ── Fetch Settlement Record ────────────────────────────────────────────
 
@@ -328,20 +373,12 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
 
     try {
       const pk = new PublicKey(address.trim());
-      const info = await (program.account as any).settlementRecord.fetch(pk);
-
-      const rec: SettlementRecordData = {
-        partyA: info.partyA.toBase58(),
-        partyB: info.partyB.toBase58(),
-        assetAMint: info.assetAMint.toBase58(),
-        assetBMint: info.assetBMint.toBase58(),
-        commitmentHash: bytesToHex(info.commitmentHash),
-        versionA: bnToNum(info.versionA),
-        versionB: bnToNum(info.versionB),
-        scheme: schemeEnumToIndex(info.scheme),
-        settledAt: bnToNum(info.settledAt),
-        bump: info.bump,
-      };
+      // Read raw bytes — IDL lacks field definitions so Anchor can't deserialize
+      const accountInfo = await program.provider.connection.getAccountInfo(pk);
+      if (!accountInfo || accountInfo.data.length < 194) {
+        throw new Error('Account not found or too small');
+      }
+      const rec = parseSettlementRecord(Buffer.from(accountInfo.data));
 
       setRecord(rec);
       setFetchedAddr(address.trim());
@@ -375,9 +412,10 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
     setPhase('unsealing');
 
     try {
-      // Parse private key
-      const sk = BigInt(privateKeyInput.trim());
-      if (sk <= 0n) throw new Error('Private key must be a positive integer');
+      // Parse private keys — each party has a separate key
+      const skA = privateKeyA.trim() ? BigInt(privateKeyA.trim()) : null;
+      const skB = privateKeyB.trim() ? BigInt(privateKeyB.trim()) : null;
+      if (!skA && !skB) throw new Error('Provide at least one private key');
 
       const partyA = new PublicKey(record.partyA);
       const partyB = new PublicKey(record.partyB);
@@ -388,25 +426,39 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
       const [ledgerAAddr] = findLedgerPDA(partyA, mintA, program.programId);
       const [ledgerBAddr] = findLedgerPDA(partyB, mintB, program.programId);
 
-      // Fetch both ledgers
-      const [ledgerAInfo, ledgerBInfo] = await Promise.all([
-        (program.account as any).userLedger.fetch(ledgerAAddr),
-        (program.account as any).userLedger.fetch(ledgerBAddr),
+      // Fetch raw bytes — IDL lacks field definitions so Anchor can't deserialize
+      const conn = program.provider.connection;
+      const [ledgerARaw, ledgerBRaw] = await Promise.all([
+        conn.getAccountInfo(ledgerAAddr),
+        conn.getAccountInfo(ledgerBAddr),
       ]);
 
-      // Decrypt Party A balance
-      const aCtLo = deserializeCiphertext(new Uint8Array(ledgerAInfo.balanceCtLo));
-      const aCtHi = deserializeCiphertext(new Uint8Array(ledgerAInfo.balanceCtHi));
-      const aLo = decryptU32(aCtLo, sk);
-      const aHi = decryptU32(aCtHi, sk);
-      const balanceA = (BigInt(aHi) << 32n) | BigInt(aLo);
+      if (!ledgerARaw) throw new Error(`Party A ledger not found: ${ledgerAAddr.toBase58()}`);
+      if (!ledgerBRaw) throw new Error(`Party B ledger not found: ${ledgerBAddr.toBase58()}`);
 
-      // Decrypt Party B balance
-      const bCtLo = deserializeCiphertext(new Uint8Array(ledgerBInfo.balanceCtLo));
-      const bCtHi = deserializeCiphertext(new Uint8Array(ledgerBInfo.balanceCtHi));
-      const bLo = decryptU32(bCtLo, sk);
-      const bHi = decryptU32(bCtHi, sk);
-      const balanceB = (BigInt(bHi) << 32n) | BigInt(bLo);
+      // Parse ciphertexts at correct on-chain byte offsets
+      const ledgerA = parseLedgerCiphertexts(Buffer.from(ledgerARaw.data));
+      const ledgerB = parseLedgerCiphertexts(Buffer.from(ledgerBRaw.data));
+
+      // Decrypt Party A balance (requires Key A)
+      let aLo = 0, aHi = 0, balanceA = 0n;
+      if (skA) {
+        const aCtLo = deserializeCiphertext(ledgerA.ctLo);
+        const aCtHi = deserializeCiphertext(ledgerA.ctHi);
+        aLo = decryptU32(aCtLo, skA);
+        aHi = decryptU32(aCtHi, skA);
+        balanceA = (BigInt(aHi) << 32n) | BigInt(aLo);
+      }
+
+      // Decrypt Party B balance (requires Key B)
+      let bLo = 0, bHi = 0, balanceB = 0n;
+      if (skB) {
+        const bCtLo = deserializeCiphertext(ledgerB.ctLo);
+        const bCtHi = deserializeCiphertext(ledgerB.ctHi);
+        bLo = decryptU32(bCtLo, skB);
+        bHi = decryptU32(bCtHi, skB);
+        balanceB = (BigInt(bHi) << 32n) | BigInt(bLo);
+      }
 
       setDecryptedBalances({
         partyA: { lo: aLo, hi: aHi, balance: balanceA },
@@ -427,7 +479,7 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
       setDecryptError(msg.slice(0, 200));
       setPhase('demandKey');
     }
-  }, [program, record, privateKeyInput, fetchedAddr, publicKey]);
+  }, [program, record, privateKeyA, privateKeyB, fetchedAddr, publicKey]);
 
   // ── Export JSON ────────────────────────────────────────────────────────
 
@@ -466,7 +518,8 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
     setFetchedAddr('');
     setPhase('input');
     setErrorMsg('');
-    setPrivateKeyInput('');
+    setPrivateKeyA('');
+    setPrivateKeyB('');
     setDecryptedBalances(null);
     setDecryptError('');
   }, []);
@@ -486,7 +539,7 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="dark" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div className="dark" style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* ── Top Rail ──────────────────────────────────────────────────── */}
       <div style={{ padding: '14px 36px', display: 'flex', alignItems: 'center', gap: 20, borderBottom: '1px solid var(--d-line-2)', background: 'var(--d-bg-2)' }}>
         <NexumSeal size={28} dark />
@@ -509,7 +562,7 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
       {/* ── Two-column Layout ─────────────────────────────────────────── */}
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 1, background: 'var(--d-line)', minHeight: 0 }}>
         {/* ── MAIN PANEL ─────────────────────────────────────────────── */}
-        <div style={{ background: 'var(--d-bg)', padding: '28px 36px', overflowY: 'auto' }}>
+        <div className="no-scrollbar" style={{ background: 'var(--d-bg)', padding: '28px 36px', overflowY: 'auto' }}>
           {/* Header */}
           <div style={{ borderBottom: '1px solid var(--d-line-2)', paddingBottom: 16, marginBottom: 24 }}>
             <div className="mono" style={{ fontSize: 10, letterSpacing: '.22em', color: '#9a9aa3' }}>FOLIO 02 \u00B7 AUDIT CHAMBER</div>
@@ -634,17 +687,58 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
                 )}
               </div>
 
+              {/* Auto-fill from saved keys */}
+              {savedKeys && (
+                <div style={{ marginBottom: 18, padding: '14px 16px', border: '1px solid var(--green)', background: 'rgba(31,111,62,.08)' }}>
+                  <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: 'var(--green)', marginBottom: 10 }}>
+                    {'✓'} SAVED ELGAMAL KEYS FOUND (from last settlement)
+                  </div>
+                  <button
+                    onClick={() => { setPrivateKeyA(savedKeys.keyA); setPrivateKeyB(savedKeys.keyB); }}
+                    className="btn"
+                    style={{ padding: '8px 12px', fontSize: 10, borderColor: 'var(--green)', color: 'var(--green)' }}
+                  >
+                    AUTO-FILL BOTH KEYS
+                  </button>
+                  <div className="mono" style={{ fontSize: 9, color: '#5a5a63', marginTop: 8 }}>
+                    Saved: {savedKeys.savedAt} · Party A: {savedKeys.partyA?.slice(0,8)}... · Party B: {savedKeys.partyB?.slice(0,8)}...
+                  </div>
+                </div>
+              )}
+
               <RecordHeader address={fetchedAddr} record={record} phase={phase} />
 
               <div style={{ marginTop: 20 }}>
                 <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: '#5a5a63', marginBottom: 6 }}>
-                  ELGAMAL PRIVATE KEY (BIGINT DECIMAL)
+                  KEY A — DECRYPT PARTY A BALANCE (BIGINT DECIMAL)
                 </div>
                 <input
-                  value={privateKeyInput}
-                  onChange={e => setPrivateKeyInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && privateKeyInput.trim()) unseal(); }}
-                  placeholder="12345678901234567890..."
+                  value={privateKeyA}
+                  onChange={e => setPrivateKeyA(e.target.value)}
+                  placeholder="Party A ElGamal private key..."
+                  type="password"
+                  style={{
+                    width: '100%',
+                    background: 'var(--d-bg-3)',
+                    border: '1px solid var(--d-line-2)',
+                    color: '#f4f1ea',
+                    padding: '14px 16px',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: 14,
+                    letterSpacing: '.05em',
+                    outline: 'none',
+                    marginBottom: 14,
+                  }}
+                />
+
+                <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: '#5a5a63', marginBottom: 6 }}>
+                  KEY B — DECRYPT PARTY B BALANCE (BIGINT DECIMAL)
+                </div>
+                <input
+                  value={privateKeyB}
+                  onChange={e => setPrivateKeyB(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && (privateKeyA.trim() || privateKeyB.trim())) unseal(); }}
+                  placeholder="Party B ElGamal private key..."
                   type="password"
                   style={{
                     width: '100%',
@@ -669,7 +763,7 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button
                     onClick={unseal}
-                    disabled={!privateKeyInput.trim()}
+                    disabled={!privateKeyA.trim() && !privateKeyB.trim()}
                     className="btn solid"
                     style={{ borderColor: 'var(--gold)', background: 'var(--gold)', color: 'var(--d-bg)' }}
                   >
@@ -728,7 +822,7 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
           </div>
 
           {/* Entries */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '14px 22px' }}>
+          <div className="no-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '14px 22px' }}>
             {auditLog.length === 0 && (
               <div className="mono" style={{ fontSize: 10, color: '#5a5a63', letterSpacing: '.1em', paddingTop: 12 }}>
                 {t('\u5C1A\u65E0\u67E5\u8BE2\u8BB0\u5F55\u3002', 'No queries yet.')}

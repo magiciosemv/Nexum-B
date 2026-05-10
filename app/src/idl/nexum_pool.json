@@ -1,5 +1,5 @@
 {
-  "address": "BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP",
+  "address": "6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r",
   "metadata": {
     "name": "nexum_pool",
     "version": "0.1.0",
@@ -536,6 +536,104 @@
       "args": []
     },
     {
+      "name": "deposit",
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user_token",
+          "docs": [
+            "User's source token account (wallet ATA)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "Vault PDA token account — must already exist."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "The mint address for PDA derivation."
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "execute_settle_b",
       "discriminator": [
         59,
@@ -806,6 +904,73 @@
       "args": []
     },
     {
+      "name": "initialize_vault",
+      "discriminator": [
+        48,
+        191,
+        163,
+        44,
+        71,
+        129,
+        63,
+        164
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "Shared Treasury Vault PDA token account — program-controlled escrow.",
+            "All deposits for this mint go here. All withdrawals come from here."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "The mint address for PDA derivation and token account init."
+          ]
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "initiate_commit",
       "discriminator": [
         63,
@@ -924,6 +1089,104 @@
               "name": "InitiateCommitParams"
             }
           }
+        }
+      ]
+    },
+    {
+      "name": "withdraw",
+      "discriminator": [
+        183,
+        18,
+        70,
+        156,
+        148,
+        109,
+        161,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "Vault PDA token account — program-controlled escrow."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_token",
+          "docs": [
+            "User's destination token account (wallet ATA)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "The mint address for PDA derivation."
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
         }
       ]
     },
@@ -1250,6 +1513,11 @@
     },
     {
       "code": 6026,
+      "name": "InvalidAmount",
+      "msg": "Amount must be greater than zero"
+    },
+    {
+      "code": 6027,
       "name": "InvalidZkVerifierProgram",
       "msg": "Invalid ZK verifier program ID"
     }
@@ -1722,7 +1990,7 @@
       "docs": [
         "Params for execute_settle_b.",
         "Large proof/ciphertext arrays come from the ProofData account to avoid BPF stack overflow.",
-        "Only commitment hash limbs are passed — all balance/amount values are private in the ZK circuit."
+        "Transfer amounts are private — verified inside the ZK circuit."
       ],
       "type": {
         "kind": "struct",

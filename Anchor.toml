@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-nexum_pool = "BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP"
+nexum_pool = "6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r"
 
 [registry]
 url = "https://api.apr.dev"

@@ -8,7 +8,7 @@ import { ProverManager, createPrivateCircuitInputs, serializeProof } from "../..
 import path from "path";
 import fs from "fs";
 
-const ZK_VERIFIER_ID = new PublicKey("6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN");
+const ZK_VERIFIER_ID = new PublicKey("HBjtDNTL5cj6oc97Gno14x8GjL6LNsZ26iRK4v52KjDA");
 
 describe("Verify Proof Only", () => {
   const provider = anchor.AnchorProvider.env();

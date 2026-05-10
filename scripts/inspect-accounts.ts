@@ -14,7 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const RPC = 'https://devnet.helius-rpc.com/?api-key=506b80b3-cae1-4a10-bd37-b048aa5dd8a5';
-const PROGRAM_ID = new PublicKey('BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP');
+const PROGRAM_ID = new PublicKey('6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r');
 
 async function main() {
   const settlementAddr = process.argv[2];

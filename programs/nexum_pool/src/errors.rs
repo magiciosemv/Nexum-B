@@ -69,6 +69,8 @@ pub enum NexumError {
     // ── ZK proof errors ────────────────────────────────────────────────
     #[msg("ZK proof verification failed — invalid balance transition proof")]
     ProofVerificationFailed,
+    #[msg("Amount must be greater than zero")]
+    InvalidAmount,
     #[msg("Invalid ZK verifier program ID")]
     InvalidZkVerifierProgram,
 }

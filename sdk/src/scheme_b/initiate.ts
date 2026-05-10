@@ -11,6 +11,7 @@ import * as anchor from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { computeCommitment } from "../crypto/commitment";
 import { findCommitSlotPDA, findLedgerPDA, findConfigPDA, splitAmount } from "./index";
+import { sendAndConfirmPolling } from "../utils/send_tx";
 
 export interface InitiateParams {
   counterparty: PublicKey;
@@ -73,7 +74,7 @@ export async function initiateCommit(
   const nonceBN = new anchor.BN(nonce.toString());
   const expiryBN = new anchor.BN(expiry);
 
-  const sig = await program.methods
+  const tx = await program.methods
     .initiateCommit({
       nonce: nonceBN,
       counterparty: params.counterparty,
@@ -88,7 +89,9 @@ export async function initiateCommit(
       config: configPda,
       systemProgram: SystemProgram.programId,
     })
-    .rpc({ commitment: "confirmed" });
+    .transaction();
+
+  const sig = await sendAndConfirmPolling(program.provider.connection, wallet, tx);
 
   return {
     ledger_a: ledgerA,

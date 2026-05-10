@@ -30,7 +30,7 @@ const ENDPOINT =
   "http://127.0.0.1:8899";
 
 // Program IDs (must match Anchor.toml and deployed programs)
-const NEXUM_POOL_ID = new PublicKey("BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP");
+const NEXUM_POOL_ID = new PublicKey("6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r");
 
 // ── Context Types ─────────────────────────────────────────────────────
 
@@ -55,7 +55,10 @@ export const useAnchorContext = () => React.useContext(AnchorContext);
 const AnchorInner: FC<{ children: ReactNode }> = ({ children }) => {
   const solanaWallet = useSolanaWallet();
 
-  const connection = useMemo(() => new Connection(ENDPOINT, "confirmed"), []);
+  const connection = useMemo(
+    () => new Connection(ENDPOINT, { commitment: "confirmed", confirmTransactionInitialTimeout: 120_000 }),
+    []
+  );
 
   const anchorWallet: Wallet | null = useMemo(() => {
     if (!solanaWallet.wallet || !solanaWallet.publicKey || !solanaWallet.signTransaction) {
@@ -75,7 +78,8 @@ const AnchorInner: FC<{ children: ReactNode }> = ({ children }) => {
     if (!anchorWallet) return null;
 
     const provider = new AnchorProvider(connection, anchorWallet, {
-      commitment: "confirmed",
+      commitment: "processed",        // faster: don't wait for "confirmed" through proxy
+      txConfirmationTimeout: 120_000,  // 120s — devnet via proxy needs extra time
     });
 
     try {

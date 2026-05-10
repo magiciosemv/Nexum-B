@@ -1,0 +1,1364 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Nexum — 前端优化思路 + 草图</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#07070a;
+    --panel:#0c0d12;
+    --panel-2:#11131a;
+    --ink:#e8e8ee;
+    --ink-dim:#8a8c98;
+    --ink-faint:#4a4c57;
+    --line:#1c1e27;
+    --line-2:#262836;
+    --accent:#7cf0b5;   /* signal green (ZK ok) */
+    --accent-2:#a78bfa; /* audit violet */
+    --warn:#ffb86b;
+    --danger:#ff6b82;
+    --gold:#e7c976;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  .mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+  a{color:inherit}
+
+  /* ---- layout shell ---- */
+  .shell{max-width:1280px;margin:0 auto;padding:72px 48px 120px}
+  .eyebrow{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--ink-dim)}
+  h1{font-size:56px;line-height:1.02;letter-spacing:-.02em;font-weight:800;margin:16px 0 24px;text-wrap:balance}
+  h2{font-size:30px;line-height:1.1;letter-spacing:-.015em;font-weight:700;margin:0 0 8px}
+  h3{font-size:17px;font-weight:600;margin:0 0 6px;letter-spacing:-.005em}
+  p{color:var(--ink-dim);line-height:1.6;margin:0 0 12px}
+  .lede{font-size:18px;color:#b9bbc6;max-width:780px;line-height:1.55}
+
+  .rule{height:1px;background:var(--line);margin:56px 0}
+  .section-head{display:flex;align-items:baseline;gap:16px;margin-bottom:28px}
+  .section-head .num{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--ink-faint);letter-spacing:.1em}
+
+  /* ---- brand mark ---- */
+  .brand-row{display:flex;align-items:center;gap:14px;margin-bottom:8px}
+  .mark{width:36px;height:36px;display:grid;place-items:center}
+  .mark svg{width:100%;height:100%}
+  .wordmark{font-weight:700;letter-spacing:-.01em;font-size:20px}
+  .wordmark em{font-style:normal;color:var(--accent)}
+
+  /* ---- cards / grid ---- */
+  .grid{display:grid;gap:20px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  @media (max-width:900px){.g2,.g3,.g4{grid-template-columns:1fr}}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:24px}
+  .card.tight{padding:18px}
+  .card .kicker{font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:10px}
+  .card p{margin:0}
+  .card h3 + p{margin-top:4px}
+
+  .tag{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border:1px solid var(--line-2);border-radius:999px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-dim);letter-spacing:.08em;text-transform:uppercase}
+  .tag.green{color:var(--accent);border-color:rgba(124,240,181,.25);background:rgba(124,240,181,.04)}
+  .tag.violet{color:var(--accent-2);border-color:rgba(167,139,250,.25);background:rgba(167,139,250,.04)}
+  .tag.gold{color:var(--gold);border-color:rgba(231,201,118,.25);background:rgba(231,201,118,.04)}
+  .tag.warn{color:var(--warn);border-color:rgba(255,184,107,.25);background:rgba(255,184,107,.04)}
+
+  /* ---- palette strip ---- */
+  .swatches{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+  .sw{padding:14px 14px 12px;border-radius:10px;border:1px solid var(--line);min-height:72px;display:flex;flex-direction:column;justify-content:space-between}
+  .sw .hex{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-dim);letter-spacing:.05em}
+  .sw .name{font-size:12px;font-weight:600}
+
+  /* ---- wireframe ---- */
+  .wf-wrap{display:flex;flex-direction:column;gap:14px}
+  .wf-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .wf-title{display:flex;align-items:baseline;gap:12px}
+  .wf-title .idx{font-family:'JetBrains Mono',monospace;color:var(--ink-faint);font-size:12px}
+  .wf-title h3{font-size:18px}
+  .wf-caption{color:var(--ink-dim);font-size:13px;line-height:1.55;max-width:780px}
+  .wf{position:relative;border:1px dashed var(--line-2);border-radius:14px;padding:18px;background:
+    repeating-linear-gradient(135deg,transparent 0 14px,rgba(255,255,255,.012) 14px 15px),
+    linear-gradient(#0a0b10,#0a0b10);
+  }
+  .wf svg{display:block;width:100%;height:auto}
+
+  /* reusable wireframe svg styles */
+  .wf svg .box{fill:#13151d;stroke:#262836}
+  .wf svg .box-2{fill:#0f1118;stroke:#1e212b}
+  .wf svg .panel{fill:#0b0d14;stroke:#1a1c25}
+  .wf svg .accent{fill:#7cf0b5}
+  .wf svg .accent-soft{fill:rgba(124,240,181,.12);stroke:rgba(124,240,181,.45)}
+  .wf svg .violet{fill:#a78bfa}
+  .wf svg .violet-soft{fill:rgba(167,139,250,.12);stroke:rgba(167,139,250,.45)}
+  .wf svg .gold-soft{fill:rgba(231,201,118,.12);stroke:rgba(231,201,118,.5)}
+  .wf svg .dim{fill:#3a3c48}
+  .wf svg .txt{fill:#e8e8ee;font-family:'Inter',sans-serif}
+  .wf svg .txt-dim{fill:#8a8c98;font-family:'Inter',sans-serif}
+  .wf svg .mono{font-family:'JetBrains Mono',monospace;fill:#c9cbd6}
+  .wf svg .mono-dim{font-family:'JetBrains Mono',monospace;fill:#5a5d6b}
+  .wf svg .line{stroke:#262836;fill:none}
+  .wf svg .line-dash{stroke:#333545;stroke-dasharray:3 4;fill:none}
+  .wf svg .bar{fill:#1a1d26}
+  .wf svg .bar-fill{fill:#7cf0b5}
+
+  ul.clean{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px}
+  ul.clean li{display:flex;gap:10px;color:var(--ink-dim);line-height:1.55;font-size:14px}
+  ul.clean li::before{content:"";flex:0 0 6px;height:6px;border-radius:2px;background:var(--accent);margin-top:8px}
+  ul.clean li.v::before{background:var(--accent-2)}
+  ul.clean li.g::before{background:var(--gold)}
+  ul.clean li.d::before{background:#3a3c48}
+  ul.clean li b{color:var(--ink);font-weight:600}
+
+  .kvs{display:grid;grid-template-columns:160px 1fr;gap:10px 18px;font-size:13px}
+  .kvs dt{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:.1em;text-transform:uppercase;padding-top:2px}
+  .kvs dd{margin:0;color:#cfd1db;line-height:1.55}
+  dl{margin:0}
+
+  .moment{border-left:2px solid var(--line-2);padding:4px 0 4px 18px;position:relative}
+  .moment::before{content:"";position:absolute;left:-5px;top:6px;width:8px;height:8px;border-radius:50%;background:var(--accent)}
+  .moment.v::before{background:var(--accent-2)}
+  .moment.g::before{background:var(--gold)}
+  .moment h4{font-size:14px;margin:0 0 4px;font-weight:600}
+  .moment p{font-size:13px;color:var(--ink-dim);margin:0}
+
+  .footer{margin-top:80px;padding-top:24px;border-top:1px solid var(--line);color:var(--ink-faint);font-size:12px;font-family:'JetBrains Mono',monospace;letter-spacing:.06em;display:flex;justify-content:space-between}
+
+  .cap{color:var(--ink-faint);font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:.1em;text-transform:uppercase}
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ── HEADER ───────────────────────────────────────────────── -->
+  <div class="brand-row">
+    <div class="mark">
+      <!-- logo concept v1: two crossing baby-jubjub arcs forming an N -->
+      <svg viewBox="0 0 48 48" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="1" y="1" width="46" height="46" rx="12" fill="#0f1118" stroke="#262836"/>
+        <path d="M13 34 L13 14 L35 34 L35 14" stroke="#7cf0b5" stroke-width="2.2"/>
+        <circle cx="13" cy="14" r="2.2" fill="#7cf0b5"/>
+        <circle cx="35" cy="34" r="2.2" fill="#a78bfa"/>
+        <path d="M13 34 Q 24 24 35 14" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="2 3" opacity=".8"/>
+      </svg>
+    </div>
+    <div class="wordmark">Nexum<em>·</em>Protocol</div>
+    <span class="tag" style="margin-left:8px">Design Notes v1 · 2026-04-21</span>
+  </div>
+
+  <div class="eyebrow">Frontend Optimization Brief</div>
+  <h1>从「混搭赛博朋克 Demo」<br/>到「机构级合规暗池工具」</h1>
+  <p class="lede">
+    现有 <span class="mono" style="color:#cfd1db">frony.html</span> 的骨架是对的：首页 → 角色选择 → 交易终端 / 监管终端。
+    问题在于视觉语言在各页面之间跳跃（紫黑毛玻璃首页 + 绿色扫描雷达 + 纯黑终端），
+    以及缺少能让 Cumberland / DWF 量级机构相信这是「真工具」的细节密度与叙事深度。
+    本文档先给出<b style="color:var(--ink)">设计系统 · 信息架构 · 关键时刻方案 · 9 个页面的低保真草图</b>，
+    等你确认后再做成品。
+  </p>
+
+  <div class="rule"></div>
+
+  <!-- ── 1. 诊断 ─────────────────────────────────────────────── -->
+  <div class="section-head">
+    <span class="num">01</span><h2>对现有稿的诊断</h2>
+  </div>
+
+  <div class="grid g2">
+    <div class="card">
+      <div class="kicker">✓ 保留什么</div>
+      <ul class="clean">
+        <li><b>三视图架构</b>：Landing · 角色选择 · 双终端分视角，这是正确的信息结构。</li>
+        <li><b>终端日志作为叙事载体</b>：让 ZK 的「不可见性」变得可见，这是核心张力。</li>
+        <li><b>中英双语开关</b>：Colosseum 评审 + 国内机构都覆盖。</li>
+        <li><b>State machine 驱动的结算流程</b>：PROVING / EXCHANGING / SUBMITTING / SUCCESS 的分段是对的。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="kicker">✗ 需要重做什么</div>
+      <ul class="clean">
+        <li class="v"><b>视觉语言分裂</b>：首页紫黑 3D 网格 vs 内页绿色扫描雷达 vs 纯黑面板，像三个 app。</li>
+        <li class="v"><b>信息密度不够「机构感」</b>：真正的 OTC 台子屏幕上堆满数字、密文哈希、版本号、CU 计量 —— 现稿太空。</li>
+        <li class="v"><b>关键技术时刻没被放大</b>：ZK 3 秒生成、双方证明握手、CU = 198,412 —— 这些是卖点，现稿只是平铺日志。</li>
+        <li class="v"><b>缺少叙事/演示模式</b>：评委 3 分钟内要看懂一次完整结算。</li>
+        <li class="v"><b>没有品牌符号</b>：「Nexum」只是一个字。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ── 2. 视觉系统 ─────────────────────────────────────────── -->
+  <div class="section-head">
+    <span class="num">02</span><h2>统一的视觉系统</h2>
+  </div>
+  <p class="lede" style="margin-bottom:28px">
+    保留「landing 更亲和、内页更硬核」的对比，但用一套共享 token 串起来。核心原则：
+    <b style="color:var(--ink)">近黑背景、单色强调、密文即装饰、数字即字体</b>。
+  </p>
+
+  <div class="grid g2">
+    <div class="card">
+      <div class="kicker">Palette · 全站共享</div>
+      <div class="swatches" style="margin-top:8px">
+        <div class="sw" style="background:#07070a"><span class="name">ink.bg</span><span class="hex">#07070A</span></div>
+        <div class="sw" style="background:#0c0d12"><span class="name">ink.panel</span><span class="hex">#0C0D12</span></div>
+        <div class="sw" style="background:#11131a"><span class="name">ink.raised</span><span class="hex">#11131A</span></div>
+        <div class="sw" style="background:#7cf0b5;color:#063324"><span class="name" style="color:#063324">signal.zk</span><span class="hex" style="color:#063324">#7CF0B5</span></div>
+        <div class="sw" style="background:#a78bfa;color:#1a0f40"><span class="name" style="color:#1a0f40">signal.audit</span><span class="hex" style="color:#1a0f40">#A78BFA</span></div>
+        <div class="sw" style="background:#e7c976;color:#2b1f00"><span class="name" style="color:#2b1f00">signal.chain</span><span class="hex" style="color:#2b1f00">#E7C976</span></div>
+      </div>
+      <p style="margin-top:14px;font-size:13px">
+        三个强调色严格分工：<span class="tag green">ZK / 本地加密</span>
+        <span class="tag violet">审计 / TEE / 监管</span>
+        <span class="tag gold">链上事件 / CU 计量</span>
+        —— 用户一看颜色就知道事件归属哪条链路。
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="kicker">Type · 分层</div>
+      <div style="font-family:'Inter',sans-serif;font-weight:800;font-size:42px;letter-spacing:-.02em;line-height:1">Display 48 · Inter 800</div>
+      <div style="font-family:'Inter',sans-serif;font-weight:700;font-size:22px;margin-top:10px">Heading 22 · Inter 700</div>
+      <div style="font-family:'Inter',sans-serif;font-size:14px;color:#cfd1db;margin-top:6px">Body 14 · Inter 400 · 供说明文字 / lede</div>
+      <div class="mono" style="font-size:13px;color:var(--accent);margin-top:12px">JETBRAINS_MONO · 11–13 · DATA / LOGS / HASH</div>
+      <div class="mono" style="font-size:10.5px;color:var(--ink-faint);letter-spacing:.2em;margin-top:6px">MONO · 10.5 · KICKER / STATUS / NUMS</div>
+      <p style="margin-top:14px;font-size:13px">
+        保留 sans + mono 混搭。所有密文、地址、CU 数、版本号、哈希、时间戳
+        <b style="color:var(--ink)">必须</b>用 mono —— 这是「机构感」的来源。
+      </p>
+    </div>
+  </div>
+
+  <div class="grid g3" style="margin-top:20px">
+    <div class="card tight">
+      <div class="kicker">背景语言</div>
+      <h3 style="font-size:15px">一套背景，两种强度</h3>
+      <p style="font-size:13px">Landing 用低频正弦点阵（慢，优雅）；内页用同款点阵但密度 ×2 + 扫描线；
+      去掉现稿中差异过大的「绿色雷达」。保留一致的近黑底色 <span class="mono">#07070A</span>。</p>
+    </div>
+    <div class="card tight">
+      <div class="kicker">组件语言</div>
+      <h3 style="font-size:15px">1px 描边 · 微圆角 · 高对比</h3>
+      <p style="font-size:13px">所有面板 <span class="mono">1px #1c1e27</span> 边、<span class="mono">12–14px</span> 圆角、无阴影（无 neon glow）。
+      机构工具绝不用霓虹发光，只用细描边 + 高对比文字。</p>
+    </div>
+    <div class="card tight">
+      <div class="kicker">数据密度</div>
+      <h3 style="font-size:15px">屏幕上永远有东西在动</h3>
+      <p style="font-size:13px">侧边永远显示：当前 Solana slot、连接的 Worker 状态、BSGS 表命中率、最近 Settlement 的密文哈希滚动 ticker。
+      即使静置，也不「安静」。</p>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ── 3. 品牌符号 ─────────────────────────────────────────── -->
+  <div class="section-head">
+    <span class="num">03</span><h2>品牌符号概念</h2>
+  </div>
+
+  <div class="grid g3">
+    <div class="card">
+      <div style="display:flex;justify-content:center;padding:16px 0 20px">
+        <svg viewBox="0 0 100 100" width="96" height="96">
+          <rect x="2" y="2" width="96" height="96" rx="22" fill="#0f1118" stroke="#262836"/>
+          <path d="M28 72 L28 28 L72 72 L72 28" stroke="#7cf0b5" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <circle cx="28" cy="28" r="3.6" fill="#7cf0b5"/>
+          <circle cx="72" cy="72" r="3.6" fill="#a78bfa"/>
+          <path d="M28 72 Q 50 50 72 28" stroke="#a78bfa" stroke-width="1.6" stroke-dasharray="3 4" fill="none" opacity=".85"/>
+        </svg>
+      </div>
+      <h3>Concept A · 双证明 N</h3>
+      <p style="font-size:13px">字母 N 的两条竖线 = 双方独立 Ledger；虚线对角 = 双方证明之间的数学关系（audit 一致性）。
+      绿 → 紫 = 本地 ZK → 审计通道。<b style="color:var(--ink)">推荐作为主 Logo</b>。</p>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:center;padding:16px 0 20px">
+        <svg viewBox="0 0 100 100" width="96" height="96">
+          <rect x="2" y="2" width="96" height="96" rx="22" fill="#0f1118" stroke="#262836"/>
+          <!-- baby jubjub heart-ish curve (twisted edwards) -->
+          <path d="M50 22 C 22 22, 22 58, 50 78 C 78 58, 78 22, 50 22 Z"
+                fill="none" stroke="#7cf0b5" stroke-width="2.2"/>
+          <circle cx="50" cy="50" r="2.8" fill="#a78bfa"/>
+          <line x1="18" y1="50" x2="82" y2="50" stroke="#a78bfa" stroke-width="1" stroke-dasharray="2 3" opacity=".6"/>
+        </svg>
+      </div>
+      <h3>Concept B · Baby Jubjub 曲线</h3>
+      <p style="font-size:13px">直接用 Twisted Edwards 曲线形状作符号 —— 圈内人一眼认出，圈外人觉得是个优雅的 seal。
+      适合用作 favicon / 加载动画。</p>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:center;padding:16px 0 20px">
+        <svg viewBox="0 0 100 100" width="96" height="96">
+          <rect x="2" y="2" width="96" height="96" rx="22" fill="#0f1118" stroke="#262836"/>
+          <rect x="22" y="34" width="24" height="32" rx="3" fill="none" stroke="#7cf0b5" stroke-width="2"/>
+          <rect x="54" y="34" width="24" height="32" rx="3" fill="none" stroke="#a78bfa" stroke-width="2"/>
+          <line x1="46" y1="50" x2="54" y2="50" stroke="#e7c976" stroke-width="2"/>
+          <circle cx="50" cy="50" r="2.5" fill="#e7c976"/>
+          <text x="50" y="86" text-anchor="middle" fill="#8a8c98" font-family="JetBrains Mono" font-size="9" letter-spacing=".15em">v7+1</text>
+        </svg>
+      </div>
+      <h3>Concept C · 两个 Ledger PDA</h3>
+      <p style="font-size:13px">两个账本之间一条金线 = 一次结算。下方 <span class="mono">v7+1</span> 直接点出「版本号单调递增」这个防重放机制。
+      更偏工程符号，适合文档封面而不是主 Logo。</p>
+    </div>
+  </div>
+
+  <p style="margin-top:24px;font-size:13px">
+    <span class="tag">建议</span> 采用 Concept A 作主 Logo + wordmark；Concept B 作 favicon / loading；Concept C 用于文档 / PPT 封面。
+  </p>
+
+  <div class="rule"></div>
+
+  <!-- ── 4. 信息架构 ─────────────────────────────────────────── -->
+  <div class="section-head">
+    <span class="num">04</span><h2>信息架构 · 9 个页面</h2>
+  </div>
+
+  <div class="grid g3">
+    <div class="card tight"><span class="tag green">P1</span><h3 style="margin-top:10px">Landing</h3><p style="font-size:13px">Hero + 三个卖点 + 一条 live settlement ticker</p></div>
+    <div class="card tight"><span class="tag green">P2</span><h3 style="margin-top:10px">角色选择</h3><p style="font-size:13px">Trader / Regulator / Dev（新增开发者视角入口）</p></div>
+    <div class="card tight"><span class="tag green">P3</span><h3 style="margin-top:10px">Pool Dashboard（新）</h3><p style="font-size:13px">资金池总览：TVL 密文占位、每资产 ledger 数、24h 结算笔数</p></div>
+    <div class="card tight"><span class="tag green">P4</span><h3 style="margin-top:10px">Deposit / Withdraw（新）</h3><p style="font-size:13px">统一双 tab 面板，强调「此步金额可见，但此时无交易意图」</p></div>
+    <div class="card tight"><span class="tag green">P5</span><h3 style="margin-top:10px">Trader Settlement（核心重做）</h3><p style="font-size:13px">左配置 / 中 prover / 右网络，底部 CU meter 常驻</p></div>
+    <div class="card tight"><span class="tag green">P6</span><h3 style="margin-top:10px">Settlement History（新）</h3><p style="font-size:13px">列表 + 单条详情 drawer：双方密文 / 双 proof / CU / audit log</p></div>
+    <div class="card tight"><span class="tag violet">P7</span><h3 style="margin-top:10px">Regulator Audit（重做）</h3><p style="font-size:13px">左列表 / 中 PCR 验证 / 右 Enclave 解密仪式</p></div>
+    <div class="card tight"><span class="tag violet">P8</span><h3 style="margin-top:10px">TEE Monitor（新）</h3><p style="font-size:13px">Enclave 心跳、PCR 值、KMS 策略绑定、最近审计日志流</p></div>
+    <div class="card tight"><span class="tag gold">P9</span><h3 style="margin-top:10px">ZK Circuit View（新）</h3><p style="font-size:13px">balance_transition.circom 的 6 类约束可视化 + 12,778 约束计数</p></div>
+  </div>
+
+  <p style="margin-top:20px;font-size:13px;color:var(--ink-dim)">
+    <b style="color:var(--ink)">叙事模式（Demo Mode）</b>：顶栏新增 <span class="tag">▶ Guided Demo</span> 按钮，点击后进入 7 步自动演示，
+    每步会高亮对应 UI 区域 + 显示底部旁白条（中英双语）。评委 3 分钟内完整体验 deposit → settle → audit 闭环。
+  </p>
+
+  <div class="rule"></div>
+
+  <!-- ── 5. 关键时刻 ─────────────────────────────────────────── -->
+  <div class="section-head">
+    <span class="num">05</span><h2>六大关键时刻 · 你选中的全部放大</h2>
+  </div>
+
+  <div class="grid g2">
+    <div class="moment">
+      <h4>① 余额：密文 → 本地解密（BSGS 查找表）</h4>
+      <p>页面进入 Trader Terminal 瞬间，余额框显示 <span class="mono" style="color:#7cf0b5">████████████</span> 占位 → 右侧终端打印 BSGS 建表 0–100% + 实时「步数 / 65,536」→ 建表完成后，余额从密文数字（128 字节 hex 流）以 <b style="color:var(--ink)">打字机 + 数字翻滚</b>效果解密为明文「1,250,000.00 USDC」。耗时约 1.5s，全程自动。</p>
+    </div>
+    <div class="moment">
+      <h4>② 3 秒 ZK 证明生成</h4>
+      <p>中央证明器面板全屏接管，背景出现 <b style="color:var(--ink)">12,778 个小点</b>（= 约束数）逐步点亮，底部横向进度条 + Groth16 四阶段状态（Witness → MSM → Pairing → Serialize）。点亮到 100% 时所有点汇聚成一个 256 字节的发光字符串。</p>
+    </div>
+    <div class="moment v">
+      <h4>③ 双方证明握手（A ↔ B 对称视觉）</h4>
+      <p>屏幕左右对称分裂：左侧自己的 proof 块，右侧对手方 proof 从远处滑入。中间出现 <span class="mono">verify_same_transfer_amount()</span> 的椭圆曲线等式动画 —— 两个 <span class="mono">audit_ct.C2</span> 点在 Baby Jubjub 曲线上相减，结果恰好落在 <span class="mono">(r_a-r_b)·audit_pk</span> 上 → 亮绿 ✓。</p>
+    </div>
+    <div class="moment g">
+      <h4>④ 链上密文字段「肉眼可见变化」</h4>
+      <p>结算成功瞬间，底部弹出双行 diff：
+      <br/><span class="mono" style="color:#8a8c98">ledger_a.balance_ct_lo:</span> <span class="mono" style="color:#ff6b82;text-decoration:line-through">0x2b4f9c…d81a</span> → <span class="mono" style="color:#7cf0b5">0x71fc3e…90b2</span>
+      <br/><span class="mono" style="color:#8a8c98">ledger_a.version:</span> <span class="mono" style="color:#ff6b82;text-decoration:line-through">7</span> → <span class="mono" style="color:#7cf0b5">8</span>
+      <br/>字节级高亮哪些 byte 变了。旁边金色 CU 计量表最终定格 <span class="mono" style="color:#e7c976">198,412 / 400,000</span>。</p>
+    </div>
+    <div class="moment v">
+      <h4>⑤ TEE Enclave 解密仪式</h4>
+      <p>Regulator 视图点击 Confirm Audit 后进入「仪式动画」：屏幕中央一个由三行 PCR0/1/2 hash 组成的锁环 → AWS KMS Attestation Document 送入 → 锁环逐层旋转对齐 → 释放 DEK → 内层 <span class="mono">BSGS_decrypt × 4</span> 解密倒计时 → 明文浮现。整个过程 ~2s，但仪式感拉满。</p>
+    </div>
+    <div class="moment g">
+      <h4>⑥ AuditLog PDA 强制留痕</h4>
+      <p>审计完成后屏幕分两半：左侧「审计结果 500,000 USDC」，右侧一个 <b style="color:var(--ink)">不可关闭</b>的弹窗：
+      「A permanent AuditLog PDA has been written to Solana · visible to target user forever」+ 链上交易哈希 + 一条飞向 Solana explorer 的动画线。
+      强调「监管能看但也被看」= 双向透明。</p>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ── 6. Wireframes ───────────────────────────────────────── -->
+  <div class="section-head">
+    <span class="num">06</span><h2>低保真草图 · 9 页</h2>
+  </div>
+  <p class="lede" style="margin-bottom:32px">
+    以下每页只画<b style="color:var(--ink)">结构与层级</b>，不画精确样式。数字、密文、哈希用占位符表示。
+    草图风格：近黑底 + 单色线框，与最终稿的「细描边 + 高对比」一致，便于直接升级。
+  </p>
+
+  <!-- WF 1 Landing -->
+  <div class="wf-wrap" style="margin-bottom:40px">
+    <div class="wf-head">
+      <div class="wf-title"><span class="idx">P1</span><h3>Landing · 机构首页</h3></div>
+      <div><span class="tag green">重做</span></div>
+    </div>
+    <p class="wf-caption">目标：10 秒内讲清楚「给谁 / 解决什么 / 怎么做到」。去掉现稿的紫黑 3D，用一条 <b style="color:var(--ink)">实时结算 ticker</b> 代替，更像真 fintech 产品；三个特性卡从文字卡升级为「带缩略图 + 数字」的证据卡。</p>
+    <div class="wf">
+      <svg viewBox="0 0 1200 720">
+        <!-- nav -->
+        <rect x="40" y="24" width="1120" height="48" rx="24" class="box"/>
+        <rect x="56" y="40" width="16" height="16" rx="4" class="accent-soft"/>
+        <text x="82" y="53" class="txt mono" font-size="12">NEXUM · PROTOCOL</text>
+        <text x="680" y="53" class="txt-dim" font-size="11">PRODUCT</text>
+        <text x="760" y="53" class="txt-dim" font-size="11">DOCS</text>
+        <text x="830" y="53" class="txt-dim" font-size="11">CIRCUIT</text>
+        <text x="920" y="53" class="txt-dim" font-size="11">GITHUB · 中/EN</text>
+        <rect x="1040" y="34" width="104" height="28" rx="14" class="accent-soft"/>
+        <text x="1052" y="52" class="mono" font-size="10" fill="#7cf0b5">LAUNCH APP →</text>
+
+        <!-- live ticker -->
+        <rect x="40" y="92" width="1120" height="34" rx="6" class="box-2"/>
+        <circle cx="60" cy="109" r="4" class="accent"/>
+        <text x="74" y="113" class="mono-dim" font-size="10">LIVE</text>
+        <text x="110" y="113" class="mono" font-size="10">SETL-8F2A…9C11  ·  USDC/SOL  ·  198,412 CU  ·  12s ago    │    SETL-3C9B…4D88  ·  USDC/USDT  ·  197,310 CU  ·  41s ago    │    SETL-1E77…B502  ·  USDC/SOL  ·  199,001 CU  ·  02m ago</text>
+
+        <!-- hero -->
+        <rect x="40" y="148" width="740" height="360" rx="14" class="panel"/>
+        <text x="72" y="196" class="mono-dim" font-size="11" letter-spacing="2">HACKATHON MVP v1.0 · COLOSSEUM FRONTIER · ZK TRACK</text>
+        <text x="72" y="260" class="txt" font-size="44" font-weight="800">Zero-text settlement.</text>
+        <text x="72" y="308" class="txt" font-size="44" font-weight="800">Zero trust. Full audit.</text>
+        <text x="72" y="356" class="txt-dim" font-size="15">Solana 上首个基于 Baby Jubjub 加密余额池的机构合规</text>
+        <text x="72" y="378" class="txt-dim" font-size="15">暗池 OTC 结算协议。交易意图绝密，监管始终可控。</text>
+        <rect x="72" y="416" width="180" height="44" rx="22" class="accent-soft"/>
+        <text x="96" y="443" class="mono" font-size="12" fill="#7cf0b5">START SETTLING →</text>
+        <rect x="264" y="416" width="160" height="44" rx="22" class="box-2"/>
+        <text x="296" y="443" class="mono-dim" font-size="12">READ DOCS</text>
+
+        <!-- right: schematic of the pool -->
+        <rect x="800" y="148" width="360" height="360" rx="14" class="panel"/>
+        <text x="816" y="178" class="mono-dim" font-size="11" letter-spacing="1">ARCHITECTURE · LIVE</text>
+        <rect x="820" y="196" width="320" height="60" rx="8" class="box-2"/>
+        <text x="836" y="218" class="txt-dim" font-size="11">Ledger PDA · User A · USDC</text>
+        <text x="836" y="240" class="mono" font-size="10" fill="#7cf0b5">balance_ct ████████████████</text>
+        <rect x="820" y="268" width="320" height="60" rx="8" class="box-2"/>
+        <text x="836" y="290" class="txt-dim" font-size="11">Ledger PDA · User B · USDC</text>
+        <text x="836" y="312" class="mono" font-size="10" fill="#7cf0b5">balance_ct ████████████████</text>
+        <line x1="980" y1="340" x2="980" y2="380" class="line-dash"/>
+        <rect x="820" y="384" width="320" height="48" rx="8" class="violet-soft"/>
+        <text x="836" y="414" class="mono" font-size="10" fill="#a78bfa">SETTLEMENT RECORD + AUDIT CIPHERTEXTS</text>
+        <line x1="980" y1="440" x2="980" y2="468" class="line-dash"/>
+        <rect x="900" y="470" width="160" height="28" rx="6" class="gold-soft"/>
+        <text x="930" y="489" class="mono" font-size="10" fill="#e7c976">TEE · AWS NITRO</text>
+
+        <!-- feature cards -->
+        <rect x="40" y="528" width="360" height="170" rx="14" class="box"/>
+        <rect x="60" y="548" width="22" height="22" rx="4" class="accent-soft"/>
+        <text x="60" y="600" class="txt" font-size="16" font-weight="700">池内结算零明文</text>
+        <text x="60" y="620" class="txt-dim" font-size="11">Baby Jubjub ElGamal · 独立 Ledger PDA</text>
+        <text x="60" y="666" class="mono" font-size="22" fill="#7cf0b5" font-weight="700">0 bytes</text>
+        <text x="160" y="666" class="mono-dim" font-size="10">PLAINTEXT EMITTED</text>
+
+        <rect x="420" y="528" width="360" height="170" rx="14" class="box"/>
+        <rect x="440" y="548" width="22" height="22" rx="4" class="accent-soft"/>
+        <text x="440" y="600" class="txt" font-size="16" font-weight="700">原子级单笔双证明</text>
+        <text x="440" y="620" class="txt-dim" font-size="11">Groth16 × 2 · 单笔交易内完成</text>
+        <text x="440" y="666" class="mono" font-size="22" fill="#7cf0b5" font-weight="700">198,400 CU</text>
+        <text x="600" y="666" class="mono-dim" font-size="10">/ 400,000 BUDGET</text>
+
+        <rect x="800" y="528" width="360" height="170" rx="14" class="box"/>
+        <rect x="820" y="548" width="22" height="22" rx="4" class="violet-soft"/>
+        <text x="820" y="600" class="txt" font-size="16" font-weight="700">TEE 合规审计预言机</text>
+        <text x="820" y="620" class="txt-dim" font-size="11">AWS Nitro · PCR 绑定 · 强制留痕</text>
+        <text x="820" y="666" class="mono" font-size="22" fill="#a78bfa" font-weight="700">On-chain</text>
+        <text x="960" y="666" class="mono-dim" font-size="10">AUDIT LOG PDA</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- WF 2 Role select -->
+  <div class="wf-wrap" style="margin-bottom:40px">
+    <div class="wf-head">
+      <div class="wf-title"><span class="idx">P2</span><h3>角色选择 · Clearance Gate</h3></div>
+      <div><span class="tag">轻度调整</span></div>
+    </div>
+    <p class="wf-caption">把现稿的单列居中升级为三列：Trader · Regulator · <b style="color:var(--ink)">Developer</b>（新加）。
+    底部保留三个技术徽章，并把它们从静态 icon 升级为「点击展开 → 显示版本号 / 仓库 / 可信设置参与者数」的胶囊。</p>
+    <div class="wf">
+      <svg viewBox="0 0 1200 600">
+        <rect x="40" y="24" width="1120" height="40" rx="8" class="box"/>
+        <text x="56" y="49" class="mono-dim" font-size="11">← RETURN</text>
+        <text x="1080" y="49" class="mono-dim" font-size="11" text-anchor="end">RESTRICTED · INSTITUTIONAL NODE</text>
+
+        <text x="600" y="130" class="txt" font-size="13" text-anchor="middle" font-family="JetBrains Mono" letter-spacing="3" fill="#8a8c98">SELECT CLEARANCE LEVEL</text>
+        <text x="600" y="176" class="txt" font-size="42" text-anchor="middle" font-weight="800">Nexum Protocol</text>
+
+        <!-- three cards -->
+        <rect x="100" y="220" width="300" height="280" rx="14" class="panel"/>
+        <rect x="100" y="220" width="300" height="6" class="accent"/>
+        <rect x="120" y="252" width="40" height="40" rx="8" class="accent-soft"/>
+        <text x="120" y="316" class="txt" font-size="20" font-weight="700">Trader</text>
+        <text x="120" y="340" class="txt-dim" font-size="12">生成 ZK 证明，进行池内</text>
+        <text x="120" y="358" class="txt-dim" font-size="12">OTC 结算</text>
+        <text x="120" y="402" class="mono-dim" font-size="10" letter-spacing="1">REQUIRES · WALLET + SK</text>
+        <rect x="120" y="440" width="260" height="40" rx="6" class="accent-soft"/>
+        <text x="148" y="465" class="mono" font-size="11" fill="#7cf0b5">ENTER AS TRADER →</text>
+
+        <rect x="450" y="220" width="300" height="280" rx="14" class="panel"/>
+        <rect x="450" y="220" width="300" height="6" class="violet"/>
+        <rect x="470" y="252" width="40" height="40" rx="8" class="violet-soft"/>
+        <text x="470" y="316" class="txt" font-size="20" font-weight="700">Regulator</text>
+        <text x="470" y="340" class="txt-dim" font-size="12">向 TEE 提出审计申请，</text>
+        <text x="470" y="358" class="txt-dim" font-size="12">强制链上留痕</text>
+        <text x="470" y="402" class="mono-dim" font-size="10" letter-spacing="1">REQUIRES · REGISTERED AUDITOR</text>
+        <rect x="470" y="440" width="260" height="40" rx="6" class="violet-soft"/>
+        <text x="494" y="465" class="mono" font-size="11" fill="#a78bfa">ENTER AS REGULATOR →</text>
+
+        <rect x="800" y="220" width="300" height="280" rx="14" class="panel"/>
+        <rect x="800" y="220" width="300" height="6" class="gold-soft"/>
+        <rect x="820" y="252" width="40" height="40" rx="8" class="gold-soft"/>
+        <text x="820" y="316" class="txt" font-size="20" font-weight="700">Developer</text>
+        <text x="820" y="340" class="txt-dim" font-size="12">查看电路约束 / TEE 状态 /</text>
+        <text x="820" y="358" class="txt-dim" font-size="12">结算档案（只读）</text>
+        <text x="820" y="402" class="mono-dim" font-size="10" letter-spacing="1">READ-ONLY · PUBLIC</text>
+        <rect x="820" y="440" width="260" height="40" rx="6" class="gold-soft"/>
+        <text x="852" y="465" class="mono" font-size="11" fill="#e7c976">ENTER AS DEV →</text>
+
+        <!-- tech badges -->
+        <rect x="240" y="534" width="200" height="32" rx="16" class="box-2"/>
+        <text x="260" y="554" class="mono-dim" font-size="10">◉ BABY JUBJUB</text>
+        <text x="360" y="554" class="mono" font-size="10" fill="#8a8c98">v1.0</text>
+        <rect x="500" y="534" width="200" height="32" rx="16" class="box-2"/>
+        <text x="520" y="554" class="mono-dim" font-size="10">◉ GROTH16 BN254</text>
+        <text x="636" y="554" class="mono" font-size="10" fill="#8a8c98">12,778 cnstr</text>
+        <rect x="760" y="534" width="200" height="32" rx="16" class="box-2"/>
+        <text x="780" y="554" class="mono-dim" font-size="10">◉ NITRO ENCLAVE</text>
+        <text x="896" y="554" class="mono" font-size="10" fill="#8a8c98">PCR ✓</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- WF 3 Pool Dashboard (NEW) -->
+  <div class="wf-wrap" style="margin-bottom:40px">
+    <div class="wf-head">
+      <div class="wf-title"><span class="idx">P3</span><h3>Pool Dashboard · 资金池总览（新增）</h3></div>
+      <div><span class="tag green">新增</span></div>
+    </div>
+    <p class="wf-caption">进入 Trader 后的落地页。左栏 Treasury 明文 TVL（可见，因为存款本来就可见）+ 右栏该用户在 Nexum 内的密文余额矩阵 + 底部 24h 全网结算热力图。</p>
+    <div class="wf">
+      <svg viewBox="0 0 1200 720">
+        <!-- topbar -->
+        <rect x="40" y="24" width="1120" height="56" rx="10" class="box"/>
+        <text x="60" y="58" class="txt mono" font-size="12">NEXUM · TRADER</text>
+        <text x="260" y="58" class="mono-dim" font-size="11">▸ Pool</text>
+        <text x="330" y="58" class="mono-dim" font-size="11">Deposit</text>
+        <text x="410" y="58" class="mono-dim" font-size="11">Settle</text>
+        <text x="490" y="58" class="mono-dim" font-size="11">History</text>
+        <rect x="940" y="36" width="200" height="32" rx="6" class="box-2"/>
+        <text x="954" y="56" class="mono-dim" font-size="10">SLOT 312,847,291 · 00.4s</text>
+
+        <!-- left: Treasury TVL -->
+        <rect x="40" y="100" width="360" height="260" rx="14" class="panel"/>
+        <text x="60" y="128" class="mono-dim" font-size="10" letter-spacing="2">TREASURY VAULT · PUBLIC</text>
+        <text x="60" y="180" class="txt" font-size="34" font-weight="800">$ 142.8 M</text>
+        <text x="60" y="204" class="txt-dim" font-size="11">total locked · across 6 mints</text>
+        <line x1="60" y1="228" x2="380" y2="228" class="line"/>
+        <text x="60" y="254" class="mono-dim" font-size="10">USDC    47.2 M</text>
+        <rect x="180" y="246" width="180" height="4" rx="2" class="bar"/>
+        <rect x="180" y="246" width="130" height="4" rx="2" class="bar-fill"/>
+        <text x="60" y="282" class="mono-dim" font-size="10">USDT    38.1 M</text>
+        <rect x="180" y="274" width="180" height="4" rx="2" class="bar"/>
+        <rect x="180" y="274" width="105" height="4" rx="2" class="bar-fill"/>
+        <text x="60" y="310" class="mono-dim" font-size="10">SOL     312 K</text>
+        <rect x="180" y="302" width="180" height="4" rx="2" class="bar"/>
+        <rect x="180" y="302" width="80" height="4" rx="2" class="bar-fill"/>
+        <text x="60" y="338" class="mono-dim" font-size="10">wBTC    1.2 K</text>
+        <rect x="180" y="330" width="180" height="4" rx="2" class="bar"/>
+        <rect x="180" y="330" width="45" height="4" rx="2" class="bar-fill"/>
+
+        <!-- middle: your encrypted balances -->
+        <rect x="420" y="100" width="740" height="260" rx="14" class="panel"/>
+        <text x="440" y="128" class="mono-dim" font-size="10" letter-spacing="2">YOUR LEDGERS · ENCRYPTED · DECRYPTED LOCALLY</text>
+
+        <rect x="440" y="148" width="340" height="92" rx="8" class="box-2"/>
+        <rect x="452" y="160" width="18" height="18" rx="4" class="accent-soft"/>
+        <text x="478" y="174" class="txt-dim" font-size="11">USDC · Ledger PDA</text>
+        <text x="452" y="208" class="txt" font-size="24" font-weight="700" fill="#7cf0b5">1,250,000.00</text>
+        <text x="610" y="208" class="mono-dim" font-size="10">v.17</text>
+        <text x="452" y="228" class="mono-dim" font-size="9">ct_lo 0x2b4f9c…d81a · ct_hi 0xaa19…02e4</text>
+
+        <rect x="800" y="148" width="340" height="92" rx="8" class="box-2"/>
+        <rect x="812" y="160" width="18" height="18" rx="4" class="accent-soft"/>
+        <text x="838" y="174" class="txt-dim" font-size="11">SOL · Ledger PDA</text>
+        <text x="812" y="208" class="txt" font-size="24" font-weight="700" fill="#7cf0b5">4,120.50</text>
+        <text x="960" y="208" class="mono-dim" font-size="10">v.04</text>
+        <text x="812" y="228" class="mono-dim" font-size="9">ct_lo 0x71fc3e…90b2 · ct_hi 0x5d08…3c1f</text>
+
+        <rect x="440" y="252" width="340" height="92" rx="8" class="box-2"/>
+        <text x="452" y="274" class="txt-dim" font-size="11">USDT · Ledger PDA</text>
+        <text x="452" y="308" class="txt" font-size="24" font-weight="700" fill="#7cf0b5">300,000.00</text>
+
+        <rect x="800" y="252" width="340" height="92" rx="8" class="box-2" stroke-dasharray="4 4"/>
+        <text x="970" y="304" class="txt-dim" font-size="12" text-anchor="middle">+ add ledger</text>
+
+        <!-- bottom: 24h heatmap + recent -->
+        <rect x="40" y="380" width="720" height="320" rx="14" class="panel"/>
+        <text x="60" y="408" class="mono-dim" font-size="10" letter-spacing="2">NETWORK SETTLEMENTS · LAST 24h</text>
+        <text x="60" y="440" class="txt" font-size="28" font-weight="700">847</text>
+        <text x="130" y="440" class="txt-dim" font-size="12">total · 2.4× yesterday</text>
+        <!-- heatmap 24x3 -->
+        <g>
+          <rect x="60" y="464" width="680" height="200" fill="none" stroke="#1a1c25" rx="6"/>
+        </g>
+        <g fill="#7cf0b5">
+          <!-- pseudo heatmap cells -->
+          <rect x="72" y="480" width="24" height="24" rx="3" opacity=".1"/>
+          <rect x="100" y="480" width="24" height="24" rx="3" opacity=".25"/>
+          <rect x="128" y="480" width="24" height="24" rx="3" opacity=".45"/>
+          <rect x="156" y="480" width="24" height="24" rx="3" opacity=".2"/>
+          <rect x="184" y="480" width="24" height="24" rx="3" opacity=".6"/>
+          <rect x="212" y="480" width="24" height="24" rx="3" opacity=".8"/>
+          <rect x="240" y="480" width="24" height="24" rx="3" opacity=".5"/>
+          <rect x="268" y="480" width="24" height="24" rx="3" opacity=".3"/>
+          <rect x="296" y="480" width="24" height="24" rx="3" opacity=".9"/>
+          <rect x="324" y="480" width="24" height="24" rx="3" opacity=".7"/>
+          <rect x="352" y="480" width="24" height="24" rx="3" opacity=".5"/>
+          <rect x="380" y="480" width="24" height="24" rx="3" opacity=".4"/>
+          <rect x="408" y="480" width="24" height="24" rx="3" opacity=".2"/>
+          <rect x="436" y="480" width="24" height="24" rx="3" opacity=".6"/>
+          <rect x="464" y="480" width="24" height="24" rx="3" opacity=".8"/>
+          <rect x="492" y="480" width="24" height="24" rx="3" opacity=".4"/>
+          <rect x="520" y="480" width="24" height="24" rx="3" opacity=".5"/>
+          <rect x="548" y="480" width="24" height="24" rx="3" opacity=".7"/>
+          <rect x="576" y="480" width="24" height="24" rx="3" opacity=".3"/>
+          <rect x="604" y="480" width="24" height="24" rx="3" opacity=".2"/>
+          <rect x="632" y="480" width="24" height="24" rx="3" opacity=".5"/>
+          <rect x="660" y="480" width="24" height="24" rx="3" opacity=".4"/>
+          <rect x="688" y="480" width="24" height="24" rx="3" opacity=".2"/>
+          <rect x="716" y="480" width="24" height="24" rx="3" opacity=".1"/>
+          <!-- row 2, 3 similar -->
+          <rect x="72" y="512" width="24" height="24" rx="3" opacity=".3"/>
+          <rect x="100" y="512" width="24" height="24" rx="3" opacity=".15"/>
+          <rect x="128" y="512" width="24" height="24" rx="3" opacity=".65"/>
+          <rect x="156" y="512" width="24" height="24" rx="3" opacity=".4"/>
+          <rect x="184" y="512" width="24" height="24" rx="3" opacity=".7"/>
+          <rect x="212" y="512" width="24" height="24" rx="3" opacity=".9"/>
+          <rect x="240" y="512" width="24" height="24" rx="3" opacity=".3"/>
+          <rect x="268" y="512" width="24" height="24" rx="3" opacity=".5"/>
+          <rect x="296" y="512" width="24" height="24" rx="3" opacity=".6"/>
+          <rect x="324" y="512" width="24" height="24" rx="3" opacity=".4"/>
+          <rect x="352" y="512" width="24" height="24" rx="3" opacity=".8"/>
+          <rect x="380" y="512" width="24" height="24" rx="3" opacity=".2"/>
+          <rect x="408" y="512" width="24" height="24" rx="3" opacity=".1"/>
+          <rect x="436" y="512" width="24" height="24" rx="3" opacity=".9"/>
+          <rect x="464" y="512" width="24" height="24" rx="3" opacity=".5"/>
+          <rect x="492" y="512" width="24" height="24" rx="3" opacity=".6"/>
+          <rect x="520" y="512" width="24" height="24" rx="3" opacity=".3"/>
+          <rect x="548" y="512" width="24" height="24" rx="3" opacity=".4"/>
+          <rect x="576" y="512" width="24" height="24" rx="3" opacity=".5"/>
+          <rect x="604" y="512" width="24" height="24" rx="3" opacity=".7"/>
+          <rect x="632" y="512" width="24" height="24" rx="3" opacity=".2"/>
+          <rect x="660" y="512" width="24" height="24" rx="3" opacity=".5"/>
+          <rect x="688" y="512" width="24" height="24" rx="3" opacity=".4"/>
+          <rect x="716" y="512" width="24" height="24" rx="3" opacity=".2"/>
+        </g>
+        <text x="72" y="560" class="mono-dim" font-size="9">00h</text>
+        <text x="380" y="560" class="mono-dim" font-size="9">12h</text>
+        <text x="716" y="560" class="mono-dim" font-size="9">NOW</text>
+
+        <text x="60" y="602" class="mono-dim" font-size="10" letter-spacing="2">BY ASSET PAIR</text>
+        <rect x="60" y="616" width="180" height="30" rx="6" class="box-2"/>
+        <text x="74" y="635" class="mono" font-size="10">USDC/SOL  · 312</text>
+        <rect x="252" y="616" width="180" height="30" rx="6" class="box-2"/>
+        <text x="266" y="635" class="mono" font-size="10">USDC/USDT · 241</text>
+        <rect x="444" y="616" width="180" height="30" rx="6" class="box-2"/>
+        <text x="458" y="635" class="mono" font-size="10">SOL/wBTC  · 104</text>
+
+        <!-- right side: recent settlements ticker -->
+        <rect x="780" y="380" width="380" height="320" rx="14" class="panel"/>
+        <text x="800" y="408" class="mono-dim" font-size="10" letter-spacing="2">RECENT NETWORK ACTIVITY</text>
+        <g font-family="JetBrains Mono" font-size="10" fill="#c9cbd6">
+          <text x="800" y="440">SETL-8F2A…9C11</text><text x="1140" y="440" text-anchor="end" fill="#7cf0b5">✓ 12s</text>
+          <text x="800" y="464">SETL-3C9B…4D88</text><text x="1140" y="464" text-anchor="end" fill="#7cf0b5">✓ 41s</text>
+          <text x="800" y="488">SETL-1E77…B502</text><text x="1140" y="488" text-anchor="end" fill="#7cf0b5">✓ 02m</text>
+          <text x="800" y="512">AUDIT-72FE…0A</text><text x="1140" y="512" text-anchor="end" fill="#a78bfa">⊙ 04m</text>
+          <text x="800" y="536">SETL-9001…5C3D</text><text x="1140" y="536" text-anchor="end" fill="#7cf0b5">✓ 06m</text>
+          <text x="800" y="560">SETL-44BE…E812</text><text x="1140" y="560" text-anchor="end" fill="#7cf0b5">✓ 08m</text>
+          <text x="800" y="584">AUDIT-1CA3…9F</text><text x="1140" y="584" text-anchor="end" fill="#a78bfa">⊙ 11m</text>
+          <text x="800" y="608">SETL-FB20…770A</text><text x="1140" y="608" text-anchor="end" fill="#7cf0b5">✓ 14m</text>
+          <text x="800" y="632">SETL-0004…1199</text><text x="1140" y="632" text-anchor="end" fill="#7cf0b5">✓ 18m</text>
+          <text x="800" y="656">SETL-AA12…EE91</text><text x="1140" y="656" text-anchor="end" fill="#7cf0b5">✓ 22m</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <!-- WF 4 Deposit / Withdraw -->
+  <div class="wf-wrap" style="margin-bottom:40px">
+    <div class="wf-head">
+      <div class="wf-title"><span class="idx">P4</span><h3>Deposit / Withdraw · 出入金（新增）</h3></div>
+      <div><span class="tag green">新增</span></div>
+    </div>
+    <p class="wf-caption">一个面板，顶部 Deposit / Withdraw 分段切换。右列持续强调「此步 <b style="color:var(--ink)">明文可见</b>，因为此刻你还没有任何交易意图」—— 直接教育用户这不是 bug。</p>
+    <div class="wf">
+      <svg viewBox="0 0 1200 560">
+        <rect x="40" y="24" width="1120" height="56" rx="10" class="box"/>
+        <text x="60" y="58" class="txt mono" font-size="12">NEXUM · TRADER</text>
+        <text x="260" y="58" class="mono-dim" font-size="11">Pool</text>
+        <text x="330" y="58" class="mono-dim" font-size="11">▸ Deposit</text>
+        <text x="410" y="58" class="mono-dim" font-size="11">Settle</text>
+
+        <rect x="40" y="100" width="720" height="440" rx="14" class="panel"/>
+        <!-- tab switcher -->
+        <rect x="60" y="120" width="280" height="40" rx="8" class="box-2"/>
+        <rect x="60" y="120" width="140" height="40" rx="8" class="accent-soft"/>
+        <text x="90" y="145" class="mono" font-size="11" fill="#7cf0b5">↓ DEPOSIT</text>
+        <text x="230" y="145" class="mono-dim" font-size="11">↑ WITHDRAW</text>
+
+        <!-- asset selector -->
+        <text x="60" y="194" class="mono-dim" font-size="10" letter-spacing="2">ASSET</text>
+        <rect x="60" y="204" width="680" height="56" rx="8" class="box-2"/>
+        <circle cx="88" cy="232" r="14" fill="#1a1d26"/>
+        <text x="88" y="237" class="mono" font-size="10" text-anchor="middle">$</text>
+        <text x="114" y="228" class="txt" font-size="15" font-weight="600">USDC</text>
+        <text x="114" y="246" class="txt-dim" font-size="11">USD Coin · Solana mainnet</text>
+        <text x="720" y="237" class="mono-dim" font-size="11" text-anchor="end">wallet: 2,500,000.00 ▾</text>
+
+        <text x="60" y="294" class="mono-dim" font-size="10" letter-spacing="2">AMOUNT</text>
+        <rect x="60" y="304" width="680" height="80" rx="8" class="box-2"/>
+        <text x="78" y="360" class="txt" font-size="36" font-weight="800">50,000,000</text>
+        <text x="720" y="350" class="txt-dim" font-size="13" text-anchor="end" font-weight="600">USDC</text>
+        <text x="720" y="372" class="mono-dim" font-size="10" text-anchor="end">MAX</text>
+
+        <!-- privacy notice inline -->
+        <rect x="60" y="400" width="680" height="50" rx="8" class="box-2"/>
+        <circle cx="82" cy="425" r="6" class="accent"/>
+        <text x="100" y="422" class="txt-dim" font-size="12">此步金额 <tspan fill="#e8e8ee" font-weight="700">链上可见</tspan>。OK · 存款时你尚未指定对手方或金额，外界无法推断交易策略。</text>
+        <text x="100" y="440" class="mono-dim" font-size="10">PLAIN · NO INTENT REVEALED</text>
+
+        <rect x="60" y="470" width="680" height="48" rx="8" class="accent-soft"/>
+        <text x="80" y="498" class="mono" font-size="12" fill="#7cf0b5">DEPOSIT 50,000,000 USDC INTO LEDGER PDA →</text>
+
+        <!-- right: what's happening -->
+        <rect x="780" y="100" width="380" height="440" rx="14" class="panel"/>
+        <text x="800" y="128" class="mono-dim" font-size="10" letter-spacing="2">WHAT HAPPENS · 5 STEPS</text>
+        <g font-family="JetBrains Mono" font-size="10.5" fill="#c9cbd6">
+          <circle cx="810" cy="162" r="10" class="accent-soft"/>
+          <text x="808" y="166" fill="#7cf0b5" font-size="9" text-anchor="middle">1</text>
+          <text x="830" y="160">split amount hi/lo</text>
+          <text x="830" y="176" fill="#5a5d6b">lo = amt mod 2^32</text>
+
+          <circle cx="810" cy="206" r="10" class="accent-soft"/>
+          <text x="808" y="210" fill="#7cf0b5" font-size="9" text-anchor="middle">2</text>
+          <text x="830" y="204">ElGamal encrypt(amt, user_pk)</text>
+          <text x="830" y="220" fill="#5a5d6b">→ balance_ct_lo · balance_ct_hi</text>
+
+          <circle cx="810" cy="250" r="10" class="violet-soft"/>
+          <text x="808" y="254" fill="#a78bfa" font-size="9" text-anchor="middle">3</text>
+          <text x="830" y="248">ElGamal encrypt(amt, audit_pk)</text>
+          <text x="830" y="264" fill="#5a5d6b">→ audit_ct (for regulator)</text>
+
+          <circle cx="810" cy="294" r="10" class="accent-soft"/>
+          <text x="808" y="298" fill="#7cf0b5" font-size="9" text-anchor="middle">4</text>
+          <text x="830" y="292">Groth16 proof (~3s)</text>
+          <text x="830" y="308" fill="#5a5d6b">balance_transition.circom</text>
+
+          <circle cx="810" cy="338" r="10" class="gold-soft"/>
+          <text x="808" y="342" fill="#e7c976" font-size="9" text-anchor="middle">5</text>
+          <text x="830" y="336">submit deposit ix</text>
+          <text x="830" y="352" fill="#5a5d6b">SPL transfer + ledger update</text>
+        </g>
+
+        <line x1="800" y1="380" x2="1140" y2="380" class="line"/>
+        <text x="800" y="406" class="mono-dim" font-size="10" letter-spacing="2">EST. FOOTPRINT</text>
+        <text x="800" y="434" class="txt" font-size="20" font-weight="700">~150,000 CU</text>
+        <text x="800" y="454" class="txt-dim" font-size="12">single transaction · one ix</text>
+        <text x="800" y="490" class="mono" font-size="10" fill="#7cf0b5">rent · 0.0041 SOL</text>
+        <text x="800" y="510" class="mono" font-size="10" fill="#7cf0b5">fee  · 0.00005 SOL</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- WF 5 Trader Settlement (CORE) -->
+  <div class="wf-wrap" style="margin-bottom:40px">
+    <div class="wf-head">
+      <div class="wf-title"><span class="idx">P5</span><h3>Trader Settlement · 核心结算终端（重做）</h3></div>
+      <div><span class="tag green">核心</span></div>
+    </div>
+    <p class="wf-caption">三栏：<b style="color:var(--ink)">左 = 配置</b>（对手方、金额、角色、审计一致性校验结果预览）· <b style="color:var(--ink)">中 = 证明器舞台</b>（12,778 约束点阵 + 四阶段进度）· <b style="color:var(--ink)">右 = 网络视图</b>（A↔B 握手 + CU 实时计量）。底部常驻：ledger diff viewer（结算前/后密文字段对比）。</p>
+    <div class="wf">
+      <svg viewBox="0 0 1200 820">
+        <rect x="40" y="24" width="1120" height="56" rx="10" class="box"/>
+        <text x="60" y="58" class="txt mono" font-size="12">NEXUM · TRADER</text>
+        <text x="260" y="58" class="mono-dim" font-size="11">Pool</text>
+        <text x="330" y="58" class="mono-dim" font-size="11">Deposit</text>
+        <text x="410" y="58" class="mono-dim" font-size="11">▸ Settle</text>
+        <rect x="900" y="36" width="240" height="32" rx="6" class="accent-soft"/>
+        <text x="920" y="56" class="mono" font-size="10" fill="#7cf0b5">▶ GUIDED DEMO · 7 STEPS</text>
+
+        <!-- LEFT column: config -->
+        <rect x="40" y="100" width="340" height="500" rx="14" class="panel"/>
+        <text x="60" y="128" class="mono-dim" font-size="10" letter-spacing="2">TRADE INTENT</text>
+        <text x="60" y="162" class="txt-dim" font-size="11">Counterparty address</text>
+        <rect x="60" y="170" width="300" height="40" rx="6" class="box-2"/>
+        <text x="74" y="194" class="mono" font-size="10" fill="#7cf0b5">2vBa…zL9o ✓</text>
+        <text x="336" y="194" class="mono-dim" font-size="10" text-anchor="end">KYB ✓</text>
+
+        <text x="60" y="240" class="txt-dim" font-size="11">Your role</text>
+        <rect x="60" y="250" width="148" height="40" rx="6" class="box-2"/>
+        <rect x="60" y="250" width="148" height="40" rx="6" fill="rgba(255,107,130,.08)" stroke="rgba(255,107,130,.4)"/>
+        <text x="82" y="275" class="mono" font-size="11" fill="#ff6b82">− SENDER</text>
+        <rect x="216" y="250" width="144" height="40" rx="6" class="box-2"/>
+        <text x="240" y="275" class="mono-dim" font-size="11">+ RECEIVER</text>
+
+        <text x="60" y="318" class="txt-dim" font-size="11">Amount</text>
+        <rect x="60" y="328" width="300" height="64" rx="6" class="box-2"/>
+        <text x="78" y="372" class="txt" font-size="28" font-weight="800">500,000</text>
+        <text x="336" y="362" class="mono-dim" font-size="11" text-anchor="end">USDC</text>
+        <text x="336" y="380" class="mono-dim" font-size="9" text-anchor="end">≈ 0.4% of ledger</text>
+
+        <!-- preview -->
+        <line x1="60" y1="420" x2="360" y2="420" class="line"/>
+        <text x="60" y="446" class="mono-dim" font-size="10" letter-spacing="2">PREVIEW · LOCAL COMPUTE</text>
+        <text x="60" y="472" class="txt-dim" font-size="11">old balance (decrypted)</text>
+        <text x="336" y="472" class="mono" font-size="11" fill="#7cf0b5" text-anchor="end">1,250,000.00</text>
+        <text x="60" y="494" class="txt-dim" font-size="11">− transfer</text>
+        <text x="336" y="494" class="mono" font-size="11" fill="#ff6b82" text-anchor="end">500,000.00</text>
+        <line x1="60" y1="506" x2="360" y2="506" class="line"/>
+        <text x="60" y="526" class="txt" font-size="12" font-weight="600">new balance</text>
+        <text x="336" y="526" class="mono" font-size="12" fill="#7cf0b5" text-anchor="end" font-weight="700">750,000.00</text>
+
+        <rect x="60" y="548" width="300" height="40" rx="8" class="accent-soft"/>
+        <text x="86" y="573" class="mono" font-size="11" fill="#7cf0b5">⚡ GENERATE PROOF &amp; SETTLE</text>
+
+        <!-- CENTER: prover stage -->
+        <rect x="400" y="100" width="440" height="500" rx="14" class="panel"/>
+        <text x="420" y="128" class="mono-dim" font-size="10" letter-spacing="2">PROVER STAGE · balance_transition.circom</text>
+
+        <!-- 12778 constraint points grid (abstracted) -->
+        <rect x="420" y="148" width="400" height="240" rx="8" class="box-2"/>
+        <g fill="#7cf0b5">
+          <!-- row of dots, some lit -->
+          <g opacity=".85">
+            <circle cx="440" cy="170" r="1.2"/><circle cx="452" cy="170" r="1.2"/><circle cx="464" cy="170" r="1.2"/>
+            <circle cx="476" cy="170" r="1.2"/><circle cx="488" cy="170" r="1.2"/><circle cx="500" cy="170" r="1.2"/>
+            <circle cx="512" cy="170" r="1.2"/><circle cx="524" cy="170" r="1.2"/><circle cx="536" cy="170" r="1.2"/>
+            <circle cx="548" cy="170" r="1.2"/><circle cx="560" cy="170" r="1.2"/><circle cx="572" cy="170" r="1.2"/>
+            <circle cx="584" cy="170" r="1.2"/><circle cx="596" cy="170" r="1.2"/><circle cx="608" cy="170" r="1.2"/>
+            <circle cx="620" cy="170" r="1.2"/><circle cx="632" cy="170" r="1.2"/><circle cx="644" cy="170" r="1.2"/>
+          </g>
+        </g>
+        <g fill="#3a3c48">
+          <g>
+            <circle cx="656" cy="170" r="1.2"/><circle cx="668" cy="170" r="1.2"/><circle cx="680" cy="170" r="1.2"/>
+            <circle cx="692" cy="170" r="1.2"/><circle cx="704" cy="170" r="1.2"/><circle cx="716" cy="170" r="1.2"/>
+            <circle cx="728" cy="170" r="1.2"/><circle cx="740" cy="170" r="1.2"/><circle cx="752" cy="170" r="1.2"/>
+            <circle cx="764" cy="170" r="1.2"/><circle cx="776" cy="170" r="1.2"/><circle cx="788" cy="170" r="1.2"/>
+            <circle cx="800" cy="170" r="1.2"/>
+          </g>
+        </g>
+        <!-- (in final build, this grid renders ~12,778 actual dots animating from dim to lit) -->
+        <text x="620" y="290" class="txt-dim" font-size="10" text-anchor="middle" font-family="JetBrains Mono" letter-spacing="2">CONSTRAINTS · 8,412 / 12,778 LIT</text>
+
+        <!-- four-phase progress -->
+        <rect x="420" y="408" width="400" height="44" rx="6" class="box-2"/>
+        <rect x="420" y="408" width="280" height="44" rx="6" class="accent-soft"/>
+        <text x="448" y="434" class="mono" font-size="11" fill="#7cf0b5">WITNESS ✓ · MSM ✓ · PAIRING ▸ · SERIALIZE</text>
+
+        <rect x="420" y="464" width="400" height="8" rx="4" class="bar"/>
+        <rect x="420" y="464" width="260" height="8" rx="4" class="bar-fill"/>
+        <text x="420" y="494" class="mono-dim" font-size="10">2.1s</text>
+        <text x="820" y="494" class="mono-dim" font-size="10" text-anchor="end">~65%</text>
+
+        <rect x="420" y="516" width="400" height="72" rx="8" class="box-2"/>
+        <text x="438" y="538" class="mono-dim" font-size="10" letter-spacing="1">PROOF OUTPUT · 256 BYTES</text>
+        <text x="438" y="560" class="mono" font-size="10" fill="#7cf0b5">0x1b3f 9c02 aa1e ef02 … 72a9 00e4</text>
+        <text x="438" y="578" class="mono-dim" font-size="9">[ A(64B) | B(128B) | C(64B) ]</text>
+
+        <!-- RIGHT: network / handshake -->
+        <rect x="860" y="100" width="300" height="500" rx="14" class="panel"/>
+        <text x="880" y="128" class="mono-dim" font-size="10" letter-spacing="2">HANDSHAKE · A ↔ B</text>
+
+        <!-- A side -->
+        <rect x="880" y="150" width="120" height="100" rx="8" class="accent-soft"/>
+        <text x="894" y="176" class="mono" font-size="10" fill="#7cf0b5">PARTY A (YOU)</text>
+        <text x="894" y="200" class="txt" font-size="12" fill="#7cf0b5">proof_a ✓</text>
+        <text x="894" y="218" class="txt" font-size="12" fill="#7cf0b5">audit_ct_a ✓</text>
+        <text x="894" y="238" class="mono-dim" font-size="9">is_sender = 1</text>
+
+        <!-- B side -->
+        <rect x="1020" y="150" width="120" height="100" rx="8" class="violet-soft"/>
+        <text x="1034" y="176" class="mono" font-size="10" fill="#a78bfa">PARTY B</text>
+        <text x="1034" y="200" class="txt" font-size="12" fill="#a78bfa">proof_b ✓</text>
+        <text x="1034" y="218" class="txt" font-size="12" fill="#a78bfa">audit_ct_b ✓</text>
+        <text x="1034" y="238" class="mono-dim" font-size="9">is_sender = 0</text>
+
+        <!-- consistency check -->
+        <line x1="1000" y1="200" x2="1020" y2="200" class="line-dash" stroke="#e7c976"/>
+        <rect x="880" y="268" width="260" height="60" rx="8" class="gold-soft"/>
+        <text x="1010" y="292" class="mono" font-size="11" fill="#e7c976" text-anchor="middle">audit_ct_a ⊟ audit_ct_b</text>
+        <text x="1010" y="312" class="mono" font-size="11" fill="#e7c976" text-anchor="middle">= (r_a − r_b) · audit_pk ✓</text>
+
+        <!-- CU live meter -->
+        <line x1="880" y1="348" x2="1140" y2="348" class="line"/>
+        <text x="880" y="374" class="mono-dim" font-size="10" letter-spacing="2">COMPUTE UNIT METER</text>
+        <text x="880" y="416" class="txt" font-size="34" font-weight="800" fill="#e7c976">198,412</text>
+        <text x="880" y="438" class="mono-dim" font-size="11">/ 400,000 budget · used 49.6%</text>
+
+        <!-- cu breakdown bars -->
+        <g font-family="JetBrains Mono" font-size="9" fill="#8a8c98">
+          <text x="880" y="466">verify_a</text>
+          <rect x="960" y="458" width="180" height="8" rx="2" class="bar"/>
+          <rect x="960" y="458" width="56" height="8" rx="2" fill="#e7c976"/>
+          <text x="1140" y="466" text-anchor="end">64,000</text>
+
+          <text x="880" y="486">verify_b</text>
+          <rect x="960" y="478" width="180" height="8" rx="2" class="bar"/>
+          <rect x="960" y="478" width="56" height="8" rx="2" fill="#e7c976"/>
+          <text x="1140" y="486" text-anchor="end">64,000</text>
+
+          <text x="880" y="506">ledger upd</text>
+          <rect x="960" y="498" width="180" height="8" rx="2" class="bar"/>
+          <rect x="960" y="498" width="28" height="8" rx="2" fill="#e7c976"/>
+          <text x="1140" y="506" text-anchor="end">30,000</text>
+
+          <text x="880" y="526">settlement</text>
+          <rect x="960" y="518" width="180" height="8" rx="2" class="bar"/>
+          <rect x="960" y="518" width="14" height="8" rx="2" fill="#e7c976"/>
+          <text x="1140" y="526" text-anchor="end">15,000</text>
+
+          <text x="880" y="546">amt check</text>
+          <rect x="960" y="538" width="180" height="8" rx="2" class="bar"/>
+          <rect x="960" y="538" width="5" height="8" rx="2" fill="#e7c976"/>
+          <text x="1140" y="546" text-anchor="end">5,000</text>
+
+          <text x="880" y="566">other</text>
+          <rect x="960" y="558" width="180" height="8" rx="2" class="bar"/>
+          <rect x="960" y="558" width="18" height="8" rx="2" fill="#e7c976"/>
+          <text x="1140" y="566" text-anchor="end">20,000</text>
+        </g>
+
+        <!-- BOTTOM: ledger diff viewer -->
+        <rect x="40" y="620" width="1120" height="180" rx="14" class="panel"/>
+        <text x="60" y="650" class="mono-dim" font-size="10" letter-spacing="2">LEDGER PDA · BYTE-LEVEL DIFF · BEFORE → AFTER</text>
+
+        <rect x="60" y="666" width="540" height="120" rx="8" class="box-2"/>
+        <text x="78" y="688" class="mono-dim" font-size="10">ledger_a.balance_ct_lo</text>
+        <text x="78" y="710" class="mono" font-size="11" fill="#ff6b82" text-decoration="line-through">0x 2b4f 9c02 aa1e ef02 11a3 cd… d81a</text>
+        <text x="78" y="732" class="mono" font-size="11" fill="#7cf0b5">0x 71fc 3e12 8801 2e90 00b2 4a… 90b2</text>
+        <text x="78" y="756" class="mono-dim" font-size="10">version 7 → 8  ·  26 bytes changed</text>
+
+        <rect x="620" y="666" width="540" height="120" rx="8" class="box-2"/>
+        <text x="638" y="688" class="mono-dim" font-size="10">ledger_b.balance_ct_lo</text>
+        <text x="638" y="710" class="mono" font-size="11" fill="#ff6b82" text-decoration="line-through">0x 44be e781 0011 22aa b0c4… e812</text>
+        <text x="638" y="732" class="mono" font-size="11" fill="#7cf0b5">0x 9001 5c3d 771a 2e44 0129… 5c3d</text>
+        <text x="638" y="756" class="mono-dim" font-size="10">version 3 → 4  ·  30 bytes changed</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- WF 6 Settlement history -->
+  <div class="wf-wrap" style="margin-bottom:40px">
+    <div class="wf-head">
+      <div class="wf-title"><span class="idx">P6</span><h3>Settlement History + Record Detail（新增）</h3></div>
+      <div><span class="tag green">新增</span></div>
+    </div>
+    <p class="wf-caption">左列表 + 右 drawer。每条记录显示双方审计密文（只有拥有者或被审计时能解密）、双 Groth16 证明（永久存档可独立验证）、结算时间、关联 AuditLog（如被审计过则显示紫色徽章）。</p>
+    <div class="wf">
+      <svg viewBox="0 0 1200 620">
+        <rect x="40" y="24" width="1120" height="56" rx="10" class="box"/>
+        <text x="60" y="58" class="txt mono" font-size="12">NEXUM · TRADER</text>
+        <text x="260" y="58" class="mono-dim" font-size="11">Pool</text>
+        <text x="330" y="58" class="mono-dim" font-size="11">Deposit</text>
+        <text x="410" y="58" class="mono-dim" font-size="11">Settle</text>
+        <text x="490" y="58" class="mono-dim" font-size="11">▸ History</text>
+
+        <!-- filter strip -->
+        <rect x="40" y="100" width="1120" height="40" rx="8" class="box-2"/>
+        <text x="60" y="124" class="mono-dim" font-size="10">ASSET · ALL ▾</text>
+        <text x="180" y="124" class="mono-dim" font-size="10">DATE · 7D ▾</text>
+        <text x="300" y="124" class="mono-dim" font-size="10">ROLE · ANY ▾</text>
+        <text x="420" y="124" class="mono-dim" font-size="10">AUDIT · ANY ▾</text>
+        <text x="1140" y="124" class="mono-dim" font-size="10" text-anchor="end">47 RECORDS</text>
+
+        <!-- list -->
+        <rect x="40" y="156" width="560" height="440" rx="14" class="panel"/>
+        <g>
+          <rect x="60" y="176" width="520" height="72" rx="8" class="box-2"/>
+          <text x="78" y="200" class="mono" font-size="11" fill="#7cf0b5">SETL-1E77…B502</text>
+          <text x="78" y="220" class="txt-dim" font-size="11">USDC/SOL · SENDER · 500,000 USDC (encrypted)</text>
+          <text x="78" y="238" class="mono-dim" font-size="10">just now · 198,412 CU · v.17→18</text>
+          <rect x="520" y="200" width="50" height="20" rx="10" class="accent-soft"/>
+          <text x="545" y="214" class="mono" font-size="9" fill="#7cf0b5" text-anchor="middle">✓ OK</text>
+
+          <rect x="60" y="258" width="520" height="72" rx="8" class="box-2"/>
+          <text x="78" y="282" class="mono" font-size="11" fill="#7cf0b5">SETL-8F2A…9C11</text>
+          <text x="78" y="302" class="txt-dim" font-size="11">USDC/SOL · RECEIVER</text>
+          <text x="78" y="320" class="mono-dim" font-size="10">2026-04-18 · 197,310 CU · v.16→17</text>
+          <rect x="460" y="282" width="110" height="20" rx="10" class="violet-soft"/>
+          <text x="515" y="296" class="mono" font-size="9" fill="#a78bfa" text-anchor="middle">⊙ AUDITED · MAS</text>
+
+          <rect x="60" y="340" width="520" height="72" rx="8" class="box-2"/>
+          <text x="78" y="364" class="mono" font-size="11" fill="#7cf0b5">SETL-3C9B…4D88</text>
+          <text x="78" y="384" class="txt-dim" font-size="11">USDC/USDT · SENDER</text>
+          <text x="78" y="402" class="mono-dim" font-size="10">2026-04-19 · 196,880 CU · v.15→16</text>
+
+          <rect x="60" y="422" width="520" height="72" rx="8" class="box-2"/>
+          <text x="78" y="446" class="mono" font-size="11" fill="#7cf0b5">SETL-9001…5C3D</text>
+          <text x="78" y="466" class="txt-dim" font-size="11">USDC/SOL · RECEIVER</text>
+          <text x="78" y="484" class="mono-dim" font-size="10">2026-04-17 · 198,002 CU · v.14→15</text>
+        </g>
+
+        <!-- drawer: record detail -->
+        <rect x="620" y="156" width="540" height="440" rx="14" class="panel"/>
+        <rect x="620" y="156" width="540" height="6" class="accent"/>
+        <text x="640" y="192" class="mono-dim" font-size="10" letter-spacing="2">RECORD · SELECTED</text>
+        <text x="640" y="228" class="txt" font-size="22" font-weight="700" fill="#7cf0b5" font-family="JetBrains Mono">SETL-1E77…B502</text>
+        <text x="640" y="250" class="txt-dim" font-size="12">2026-04-21 14:22 UTC · slot 312,847,291</text>
+
+        <line x1="640" y1="268" x2="1140" y2="268" class="line"/>
+        <text x="640" y="292" class="mono-dim" font-size="10">INITIATOR</text>
+        <text x="800" y="292" class="mono" font-size="10" fill="#c9cbd6">7xKp…mNqR (you)</text>
+        <text x="640" y="312" class="mono-dim" font-size="10">COUNTERPARTY</text>
+        <text x="800" y="312" class="mono" font-size="10" fill="#c9cbd6">2vBa…zL9o</text>
+        <text x="640" y="332" class="mono-dim" font-size="10">ASSETS</text>
+        <text x="800" y="332" class="mono" font-size="10" fill="#c9cbd6">USDC → · ← SOL</text>
+
+        <text x="640" y="370" class="mono-dim" font-size="10" letter-spacing="2">AUDIT CIPHERTEXTS · RECORD</text>
+        <rect x="640" y="380" width="500" height="30" rx="6" class="violet-soft"/>
+        <text x="658" y="400" class="mono" font-size="10" fill="#a78bfa">init_audit_ct_lo  0x71fc3e…90b2</text>
+        <rect x="640" y="416" width="500" height="30" rx="6" class="violet-soft"/>
+        <text x="658" y="436" class="mono" font-size="10" fill="#a78bfa">cp_audit_ct_lo    0x9001 5c…5c3d</text>
+
+        <text x="640" y="474" class="mono-dim" font-size="10" letter-spacing="2">ZK PROOFS · VERIFIABLE ON-CHAIN</text>
+        <rect x="640" y="484" width="246" height="30" rx="6" class="accent-soft"/>
+        <text x="658" y="504" class="mono" font-size="10" fill="#7cf0b5">proof_a · 256B  ↗ verify</text>
+        <rect x="894" y="484" width="246" height="30" rx="6" class="accent-soft"/>
+        <text x="912" y="504" class="mono" font-size="10" fill="#7cf0b5">proof_b · 256B  ↗ verify</text>
+
+        <rect x="640" y="540" width="500" height="40" rx="8" class="box-2"/>
+        <text x="660" y="565" class="mono-dim" font-size="11">↗ SOLSCAN · TXN · 5xKp…mNqR</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- WF 7 Regulator -->
+  <div class="wf-wrap" style="margin-bottom:40px">
+    <div class="wf-head">
+      <div class="wf-title"><span class="idx">P7</span><h3>Regulator Audit · 监管审计终端（重做）</h3></div>
+      <div><span class="tag violet">重做</span></div>
+    </div>
+    <p class="wf-caption">三栏叙事：<b style="color:var(--ink)">① 选择结算</b> → <b style="color:var(--ink)">② PCR 锁环仪式</b>（Enclave 身份验证 + KMS 解密授权） → <b style="color:var(--ink)">③ 明文输出 + 强制 AuditLog 留痕弹窗</b>。紫色主题，与 Trader 绿色主题形成分视角差异。</p>
+    <div class="wf">
+      <svg viewBox="0 0 1200 680">
+        <rect x="40" y="24" width="1120" height="56" rx="10" class="box"/>
+        <text x="60" y="58" class="txt mono" font-size="12">NEXUM · REGULATOR NODE · MAS SINGAPORE</text>
+        <rect x="1000" y="36" width="140" height="32" rx="6" class="violet-soft"/>
+        <text x="1070" y="56" class="mono" font-size="10" fill="#a78bfa" text-anchor="middle">PCR AUTHORIZED</text>
+
+        <!-- Col 1: records -->
+        <rect x="40" y="100" width="360" height="560" rx="14" class="panel"/>
+        <text x="60" y="128" class="mono-dim" font-size="10" letter-spacing="2">① SETTLEMENT RECORDS</text>
+        <g>
+          <rect x="60" y="148" width="320" height="72" rx="8" class="box-2"/>
+          <rect x="60" y="148" width="4" height="72" class="violet"/>
+          <text x="78" y="172" class="mono" font-size="11" fill="#c9cbd6">SETL-1E77…B502</text>
+          <text x="78" y="192" class="txt-dim" font-size="11">Just now · USDC/SOL</text>
+          <text x="78" y="210" class="mono-dim" font-size="10">Jurisdiction filter: MAS</text>
+
+          <rect x="60" y="230" width="320" height="72" rx="8" class="box-2"/>
+          <text x="78" y="254" class="mono" font-size="11" fill="#c9cbd6">SETL-8F2A…9C11</text>
+          <text x="78" y="274" class="txt-dim" font-size="11">2d ago · USDC/SOL</text>
+          <text x="78" y="292" class="mono-dim" font-size="10">unaudited</text>
+
+          <rect x="60" y="312" width="320" height="72" rx="8" class="box-2"/>
+          <text x="78" y="336" class="mono" font-size="11" fill="#c9cbd6">SETL-3C9B…4D88</text>
+          <text x="78" y="356" class="txt-dim" font-size="11">3d ago · USDC/USDT</text>
+          <text x="78" y="374" class="mono-dim" font-size="10">unaudited</text>
+        </g>
+
+        <!-- Col 2: PCR ceremony -->
+        <rect x="420" y="100" width="380" height="560" rx="14" class="panel"/>
+        <text x="440" y="128" class="mono-dim" font-size="10" letter-spacing="2">② TEE · AWS NITRO ENCLAVE</text>
+
+        <!-- PCR lock ring -->
+        <g transform="translate(610 320)">
+          <circle r="135" fill="none" stroke="#262836" stroke-width="1"/>
+          <circle r="108" fill="none" stroke="#262836" stroke-width="1"/>
+          <circle r="80" fill="none" stroke="#262836" stroke-width="1"/>
+          <path d="M 0 -135 A 135 135 0 0 1 96 -96" fill="none" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+          <path d="M 0 -108 A 108 108 0 0 1 76 -76" fill="none" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+          <path d="M 0 -80 A 80 80 0 0 1 57 -57" fill="none" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+          <text x="0" y="4" font-family="JetBrains Mono" font-size="11" fill="#a78bfa" text-anchor="middle">PCR0/1/2</text>
+          <text x="0" y="22" font-family="JetBrains Mono" font-size="9" fill="#5a5d6b" text-anchor="middle">ATTESTING…</text>
+        </g>
+
+        <text x="440" y="504" class="mono" font-size="10" fill="#8a8c98">PCR0</text>
+        <text x="780" y="504" class="mono" font-size="10" fill="#a78bfa" text-anchor="end">0x a1b2 … e5f6 ✓</text>
+        <text x="440" y="524" class="mono" font-size="10" fill="#8a8c98">PCR1</text>
+        <text x="780" y="524" class="mono" font-size="10" fill="#a78bfa" text-anchor="end">0x 7c0d … 9b41 ✓</text>
+        <text x="440" y="544" class="mono" font-size="10" fill="#8a8c98">PCR2</text>
+        <text x="780" y="544" class="mono" font-size="10" fill="#a78bfa" text-anchor="end">0x ff22 … 1030 ✓</text>
+        <line x1="440" y1="558" x2="780" y2="558" class="line"/>
+        <text x="440" y="582" class="mono" font-size="10" fill="#8a8c98">KMS DEK Released</text>
+        <text x="780" y="582" class="mono" font-size="10" fill="#7cf0b5" text-anchor="end">✓ 127 ms</text>
+        <text x="440" y="602" class="mono" font-size="10" fill="#8a8c98">BSGS decrypt ×4</text>
+        <text x="780" y="602" class="mono" font-size="10" fill="#7cf0b5" text-anchor="end">✓ 201 ms</text>
+
+        <rect x="440" y="624" width="340" height="30" rx="6" class="violet-soft"/>
+        <text x="610" y="643" class="mono" font-size="10" fill="#a78bfa" text-anchor="middle">→ DECRYPT AMOUNT</text>
+
+        <!-- Col 3: result + audit log enforcement -->
+        <rect x="820" y="100" width="340" height="560" rx="14" class="panel"/>
+        <text x="840" y="128" class="mono-dim" font-size="10" letter-spacing="2">③ RESULT</text>
+        <rect x="840" y="148" width="300" height="120" rx="10" class="violet-soft"/>
+        <text x="856" y="176" class="mono" font-size="10" fill="#a78bfa">DECRYPTED · SETL-1E77…B502</text>
+        <text x="856" y="226" class="txt" font-size="36" font-weight="800" fill="#ffffff">500,000.00</text>
+        <text x="856" y="252" class="txt-dim" font-size="12">USDC · 1 USD peg</text>
+
+        <text x="840" y="300" class="mono-dim" font-size="10" letter-spacing="2">PARTIES</text>
+        <text x="840" y="324" class="mono" font-size="11" fill="#c9cbd6">Initiator   7xKp…mNqR</text>
+        <text x="840" y="344" class="mono" font-size="11" fill="#c9cbd6">Counterpty  2vBa…zL9o</text>
+
+        <!-- AuditLog enforcement -->
+        <line x1="840" y1="372" x2="1140" y2="372" class="line"/>
+        <rect x="840" y="388" width="300" height="140" rx="10" class="gold-soft"/>
+        <text x="856" y="414" class="mono" font-size="10" fill="#e7c976">ON-CHAIN AUDIT LOG · WRITTEN</text>
+        <text x="856" y="442" class="txt" font-size="13" font-weight="600" fill="#e7c976">AuditLog PDA created.</text>
+        <text x="856" y="462" class="txt-dim" font-size="11">Target user WILL SEE this audit</text>
+        <text x="856" y="480" class="txt-dim" font-size="11">request forever. Irreversible.</text>
+        <text x="856" y="508" class="mono" font-size="10" fill="#e7c976">↗ audit_log/72fe…0a</text>
+
+        <text x="840" y="556" class="mono-dim" font-size="10">JURISDICTION</text>
+        <text x="1140" y="556" class="mono" font-size="10" text-anchor="end" fill="#c9cbd6">MAS · Singapore</text>
+        <text x="840" y="576" class="mono-dim" font-size="10">REASON HASH</text>
+        <text x="1140" y="576" class="mono" font-size="10" text-anchor="end" fill="#c9cbd6">sha256 · 0x aa12…ee91</text>
+
+        <rect x="840" y="606" width="300" height="38" rx="6" class="box-2"/>
+        <text x="990" y="630" class="mono-dim" font-size="10" text-anchor="middle">EXPORT COMPLIANCE REPORT</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- WF 8 TEE Monitor -->
+  <div class="wf-wrap" style="margin-bottom:40px">
+    <div class="wf-head">
+      <div class="wf-title"><span class="idx">P8</span><h3>TEE Monitor · Enclave 状态监控（新增）</h3></div>
+      <div><span class="tag violet">新增</span></div>
+    </div>
+    <p class="wf-caption">Dev 或 Regulator 视角可见。目的：<b style="color:var(--ink)">建立对 TEE 的信任</b>。公开 PCR 值、KMS 策略绑定条件、最近的 AuditLog 流、确定性构建 Dockerfile 链接 —— 任何人都可以复现相同 PCR。</p>
+    <div class="wf">
+      <svg viewBox="0 0 1200 560">
+        <rect x="40" y="24" width="1120" height="56" rx="10" class="box"/>
+        <text x="60" y="58" class="txt mono" font-size="12">NEXUM · TEE MONITOR · PUBLIC</text>
+
+        <!-- top stats -->
+        <rect x="40" y="100" width="360" height="160" rx="14" class="panel"/>
+        <text x="60" y="128" class="mono-dim" font-size="10" letter-spacing="2">ENCLAVE HEARTBEAT</text>
+        <circle cx="60" cy="164" r="6" class="accent"/>
+        <text x="78" y="168" class="txt" font-size="22" font-weight="700">ONLINE</text>
+        <text x="60" y="200" class="txt-dim" font-size="11">uptime · 14d 3h 22m</text>
+        <text x="60" y="220" class="mono-dim" font-size="10">region · us-east-1 · m5.large</text>
+        <text x="60" y="240" class="mono-dim" font-size="10">audits served · 47</text>
+
+        <rect x="420" y="100" width="360" height="160" rx="14" class="panel"/>
+        <text x="440" y="128" class="mono-dim" font-size="10" letter-spacing="2">PCR VALUES · LIVE</text>
+        <text x="440" y="162" class="mono" font-size="11" fill="#a78bfa">PCR0 0xa1b2c3…e5f6</text>
+        <text x="440" y="182" class="mono" font-size="11" fill="#a78bfa">PCR1 0x7c0d99…9b41</text>
+        <text x="440" y="202" class="mono" font-size="11" fill="#a78bfa">PCR2 0xff2271…1030</text>
+        <line x1="440" y1="220" x2="760" y2="220" class="line"/>
+        <text x="440" y="240" class="txt-dim" font-size="11">Matches release · nexum-enclave@v1.2.1</text>
+
+        <rect x="800" y="100" width="360" height="160" rx="14" class="panel"/>
+        <text x="820" y="128" class="mono-dim" font-size="10" letter-spacing="2">KMS POLICY BINDING</text>
+        <text x="820" y="160" class="mono" font-size="11" fill="#e7c976">kms:RecipientAttestation:</text>
+        <text x="820" y="180" class="mono" font-size="11" fill="#e7c976">  PCR0 = EXPECTED ✓</text>
+        <text x="820" y="200" class="mono" font-size="11" fill="#e7c976">  PCR1 = EXPECTED ✓</text>
+        <text x="820" y="220" class="mono" font-size="11" fill="#e7c976">  PCR2 = EXPECTED ✓</text>
+        <text x="820" y="244" class="txt-dim" font-size="11">any code mutation → DEK denied</text>
+
+        <!-- audit stream -->
+        <rect x="40" y="280" width="720" height="260" rx="14" class="panel"/>
+        <text x="60" y="308" class="mono-dim" font-size="10" letter-spacing="2">RECENT AUDIT LOG STREAM · PERMANENT · IMMUTABLE</text>
+        <g font-family="JetBrains Mono" font-size="10.5" fill="#c9cbd6">
+          <text x="60" y="344" fill="#a78bfa">AUDIT-72FE…0A</text>
+          <text x="240" y="344">SETL-1E77…B502</text>
+          <text x="430" y="344">MAS · 04m ago</text>
+          <text x="720" y="344" text-anchor="end" fill="#7cf0b5">✓ decrypted</text>
+
+          <text x="60" y="372" fill="#a78bfa">AUDIT-1CA3…9F</text>
+          <text x="240" y="372">SETL-9001…5C3D</text>
+          <text x="430" y="372">SEC · 11m ago</text>
+          <text x="720" y="372" text-anchor="end" fill="#7cf0b5">✓ decrypted</text>
+
+          <text x="60" y="400" fill="#a78bfa">AUDIT-BB04…1F</text>
+          <text x="240" y="400">SETL-3C9B…4D88</text>
+          <text x="430" y="400">FCA · 1h ago</text>
+          <text x="720" y="400" text-anchor="end" fill="#7cf0b5">✓ decrypted</text>
+
+          <text x="60" y="428" fill="#a78bfa">AUDIT-8800…A0</text>
+          <text x="240" y="428">SETL-8F2A…9C11</text>
+          <text x="430" y="428">MAS · 2d ago</text>
+          <text x="720" y="428" text-anchor="end" fill="#7cf0b5">✓ decrypted</text>
+        </g>
+
+        <!-- reproducible build -->
+        <rect x="780" y="280" width="380" height="260" rx="14" class="panel"/>
+        <text x="800" y="308" class="mono-dim" font-size="10" letter-spacing="2">REPRODUCIBLE BUILD</text>
+        <text x="800" y="340" class="txt" font-size="14" font-weight="600">Verify the PCR yourself</text>
+        <text x="800" y="362" class="txt-dim" font-size="11">Any third party can rebuild the</text>
+        <text x="800" y="380" class="txt-dim" font-size="11">enclave image and compute the</text>
+        <text x="800" y="398" class="txt-dim" font-size="11">exact same PCR hash.</text>
+
+        <rect x="800" y="416" width="340" height="36" rx="6" class="box-2"/>
+        <text x="820" y="440" class="mono" font-size="11" fill="#c9cbd6">$ git clone github.com/nexum/enclave</text>
+        <rect x="800" y="460" width="340" height="36" rx="6" class="box-2"/>
+        <text x="820" y="484" class="mono" font-size="11" fill="#c9cbd6">$ docker build -t enclave .</text>
+        <rect x="800" y="504" width="340" height="28" rx="6" class="accent-soft"/>
+        <text x="970" y="523" class="mono" font-size="10" fill="#7cf0b5" text-anchor="middle">↗ VIEW SOURCE · MIT</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- WF 9 ZK circuit view -->
+  <div class="wf-wrap" style="margin-bottom:40px">
+    <div class="wf-head">
+      <div class="wf-title"><span class="idx">P9</span><h3>ZK Circuit View · 电路约束可视化（新增）</h3></div>
+      <div><span class="tag gold">新增</span></div>
+    </div>
+    <p class="wf-caption">Dev 视角的「压轴技术页」。用可视化让评委理解「12,778 个约束到底在约束什么」 —— 六大约束组（旧余额有效、新余额有效、审计密文有效、余额守恒、范围证明、信号共享）呈辐射图，中心是 <span class="mono">transfer_lo</span> / <span class="mono">transfer_hi</span> 共享信号节点。</p>
+    <div class="wf">
+      <svg viewBox="0 0 1200 580">
+        <rect x="40" y="24" width="1120" height="56" rx="10" class="box"/>
+        <text x="60" y="58" class="txt mono" font-size="12">NEXUM · CIRCUIT · balance_transition.circom</text>
+        <text x="1140" y="58" class="mono-dim" font-size="10" text-anchor="end">pragma circom 2.0.0  ·  BN254  ·  Groth16</text>
+
+        <!-- stats column -->
+        <rect x="40" y="100" width="300" height="440" rx="14" class="panel"/>
+        <text x="60" y="128" class="mono-dim" font-size="10" letter-spacing="2">CIRCUIT STATS</text>
+        <text x="60" y="164" class="txt" font-size="40" font-weight="800" fill="#e7c976">12,778</text>
+        <text x="60" y="184" class="txt-dim" font-size="12">R1CS constraints</text>
+
+        <line x1="60" y1="210" x2="320" y2="210" class="line"/>
+
+        <g font-family="JetBrains Mono" font-size="11" fill="#c9cbd6">
+          <text x="60" y="238">Private inputs</text>
+          <text x="320" y="238" text-anchor="end" fill="#8a8c98">15</text>
+          <text x="60" y="262">Public inputs</text>
+          <text x="320" y="262" text-anchor="end" fill="#8a8c98">30</text>
+          <text x="60" y="286">Witness size</text>
+          <text x="320" y="286" text-anchor="end" fill="#8a8c98">~32 KB</text>
+          <text x="60" y="310">PowersOfTau size</text>
+          <text x="320" y="310" text-anchor="end" fill="#8a8c98">15 (Hermez)</text>
+          <text x="60" y="334">Prove time (browser)</text>
+          <text x="320" y="334" text-anchor="end" fill="#7cf0b5">~3.2 s</text>
+          <text x="60" y="358">Prove time (server)</text>
+          <text x="320" y="358" text-anchor="end" fill="#7cf0b5">~800 ms</text>
+          <text x="60" y="382">Proof size</text>
+          <text x="320" y="382" text-anchor="end" fill="#8a8c98">256 B</text>
+          <text x="60" y="406">On-chain verify CU</text>
+          <text x="320" y="406" text-anchor="end" fill="#e7c976">~64,000</text>
+        </g>
+
+        <line x1="60" y1="430" x2="320" y2="430" class="line"/>
+        <text x="60" y="456" class="mono-dim" font-size="10" letter-spacing="2">VERIFICATION KEY</text>
+        <text x="60" y="478" class="mono" font-size="10" fill="#c9cbd6">α · β · γ · δ · IC[31]</text>
+        <text x="60" y="498" class="txt-dim" font-size="11">Hardcoded in zk_verifier</text>
+        <text x="60" y="516" class="mono-dim" font-size="10">vk sha256 · 0x 8a14…cc02</text>
+
+        <!-- radial constraint map -->
+        <rect x="360" y="100" width="800" height="440" rx="14" class="panel"/>
+        <text x="380" y="128" class="mono-dim" font-size="10" letter-spacing="2">CONSTRAINT GROUPS · SHARED SIGNAL TOPOLOGY</text>
+
+        <!-- center node -->
+        <g transform="translate(760 330)">
+          <circle r="54" class="gold-soft"/>
+          <text x="0" y="-6" font-family="JetBrains Mono" font-size="10" fill="#e7c976" text-anchor="middle">SHARED SIGNAL</text>
+          <text x="0" y="12" font-family="JetBrains Mono" font-size="12" fill="#e7c976" text-anchor="middle" font-weight="700">transfer_lo</text>
+          <text x="0" y="28" font-family="JetBrains Mono" font-size="12" fill="#e7c976" text-anchor="middle" font-weight="700">transfer_hi</text>
+
+          <!-- spokes to 6 constraint groups -->
+          <line x1="0" y1="-54" x2="0" y2="-140" class="line-dash" stroke="#7cf0b5"/>
+          <line x1="47" y1="-27" x2="130" y2="-77" class="line-dash" stroke="#7cf0b5"/>
+          <line x1="47" y1="27" x2="130" y2="77" class="line-dash" stroke="#a78bfa"/>
+          <line x1="0" y1="54" x2="0" y2="140" class="line-dash" stroke="#a78bfa"/>
+          <line x1="-47" y1="27" x2="-130" y2="77" class="line-dash" stroke="#7cf0b5"/>
+          <line x1="-47" y1="-27" x2="-130" y2="-77" class="line-dash" stroke="#7cf0b5"/>
+        </g>
+
+        <!-- six satellite nodes -->
+        <g font-family="JetBrains Mono" font-size="10" text-anchor="middle">
+          <g transform="translate(760 170)">
+            <rect x="-80" y="-28" width="160" height="56" rx="8" class="accent-soft"/>
+            <text y="-6" fill="#7cf0b5">① OLD CT · LO/HI</text>
+            <text y="14" fill="#7cf0b5">ElGamalVerify ×2</text>
+          </g>
+          <g transform="translate(930 240)">
+            <rect x="-80" y="-28" width="160" height="56" rx="8" class="accent-soft"/>
+            <text y="-6" fill="#7cf0b5">② NEW CT · LO/HI</text>
+            <text y="14" fill="#7cf0b5">ElGamalVerify ×2</text>
+          </g>
+          <g transform="translate(930 420)">
+            <rect x="-80" y="-28" width="160" height="56" rx="8" class="violet-soft"/>
+            <text y="-6" fill="#a78bfa">③ AUDIT CT · LO/HI</text>
+            <text y="14" fill="#a78bfa">ElGamalVerify ×2</text>
+          </g>
+          <g transform="translate(760 490)">
+            <rect x="-80" y="-28" width="160" height="56" rx="8" class="gold-soft"/>
+            <text y="-6" fill="#e7c976">④ BALANCE CONSERVATION</text>
+            <text y="14" fill="#e7c976">is_sender branch</text>
+          </g>
+          <g transform="translate(590 420)">
+            <rect x="-80" y="-28" width="160" height="56" rx="8" class="accent-soft"/>
+            <text y="-6" fill="#7cf0b5">⑤ RANGE PROOFS</text>
+            <text y="14" fill="#7cf0b5">Num2Bits(32) ×4</text>
+          </g>
+          <g transform="translate(590 240)">
+            <rect x="-80" y="-28" width="160" height="56" rx="8" class="accent-soft"/>
+            <text y="-6" fill="#7cf0b5">⑥ CIPHERTEXT BIND</text>
+            <text y="14" fill="#7cf0b5">pk · r · C1 · C2</text>
+          </g>
+        </g>
+
+        <!-- bottom caption -->
+        <text x="380" y="510" class="mono-dim" font-size="10">∙ 共享信号 transfer_lo/hi 同时喂入审计密文验证与余额守恒约束</text>
+        <text x="380" y="526" class="mono-dim" font-size="10">∙ 证明者在电路拓扑上无法为两者提供不同值 — 不是逻辑检查，是物理结构</text>
+      </svg>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ── 7. Next steps ───────────────────────────────────────── -->
+  <div class="section-head">
+    <span class="num">07</span><h2>下一步 · 请你确认</h2>
+  </div>
+
+  <div class="grid g2">
+    <div class="card">
+      <div class="kicker">需要你反馈</div>
+      <dl class="kvs">
+        <dt>品牌符号</dt>
+        <dd>Concept A / B / C 选哪个作主 Logo？还是都不满意？</dd>
+        <dt>页面取舍</dt>
+        <dd>9 个页面是否全部需要，还是黑客松 demo 先聚焦 P1 · P2 · P5 · P7？</dd>
+        <dt>叙事模式</dt>
+        <dd>Guided Demo 的 7 步流程是否需要我先写一版脚本给你审？</dd>
+        <dt>数据占位</dt>
+        <dd>机构名、具体金额、地址要用 mock（推荐）还是想接 devnet 真数据？</dd>
+        <dt>语言默认值</dt>
+        <dd>Landing 页默认中还是英？</dd>
+      </dl>
+    </div>
+    <div class="card">
+      <div class="kicker">确认后我将产出</div>
+      <ul class="clean">
+        <li><b>单个 HTML 文件</b>：9 页集成为一个 SPA，顶部 Tabs 切换。</li>
+        <li><b>design_canvas 呈现</b>：每个页面作为独立 artboard，评委可以双击任一页面进入全屏 demo。</li>
+        <li><b>真实交互</b>：所有按钮可点，状态机按草图逻辑驱动，Guided Demo 一键跑完整流程。</li>
+        <li><b>Tweaks 面板</b>：允许评审切换 强调色 / 中英 / 启用叙事模式 / 降低动画强度。</li>
+        <li><b>出品时间预估</b>：核心 P5 + P7 + P1 约 2 轮迭代；剩余 6 页按需补齐。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>NEXUM · DESIGN NOTES v1 · 2026.04.21</span>
+    <span>AWAITING SIGN-OFF · P5 + P7 FIRST</span>
+  </div>
+
+</div>
+
+</body>
+</html>

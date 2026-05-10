@@ -1,5 +1,4 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Approve};
 use crate::state::{UserLedger, LedgerStatus, CommitSlot, SlotStatus, ProtocolConfig};
 use crate::errors::NexumError;
 
@@ -66,26 +65,6 @@ pub struct AcceptCommit<'info> {
     )]
     pub config: Box<Account<'info, ProtocolConfig>>,
 
-    /// Party B's token account for asset_b — source of B→A transfer.
-    /// Must be owned by Party B and match the CommitSlot's asset_b_mint.
-    #[account(
-        mut,
-        constraint = party_b_token.owner == s.key() @ NexumError::Unauthorized,
-        constraint = party_b_token.mint == commit_slot.asset_b_mint @ NexumError::MintMismatch,
-    )]
-    pub party_b_token: Box<Account<'info, TokenAccount>>,
-
-    /// Delegate PDA — will be authorized to transfer from Party B's token account.
-    /// Derived from commit_slot key so it's unique per swap.
-    /// CHECK: PDA used as delegate authority, no data stored.
-    #[account(
-        seeds = [b"delegate", commit_slot.key().as_ref()],
-        bump,
-    )]
-    /// CHECK: PDA used as signing authority
-    pub delegate: AccountInfo<'info>,
-
-    pub token_program: Program<'info, Token>,
 }
 
 pub fn handler(ctx: Context<AcceptCommit>) -> Result<()> {
@@ -97,20 +76,6 @@ pub fn handler(ctx: Context<AcceptCommit>) -> Result<()> {
         clock.unix_timestamp <= ctx.accounts.ledger_a.pending_expiry + cfg.clock_tolerance,
         NexumError::InitiateExpired,
     );
-
-    // ── Approve delegate PDA on Party B's token account ────────────────
-    // Party B authorizes the delegate PDA to transfer asset_b tokens on their behalf.
-    // Amount: u64::MAX (unlimited). The real transfer amount is verified against
-    // the commitment hash at execute time — only the committed amount will be transferred.
-    let cpi_ctx = CpiContext::new(
-        ctx.accounts.token_program.to_account_info(),
-        Approve {
-            to: ctx.accounts.party_b_token.to_account_info(),
-            delegate: ctx.accounts.delegate.to_account_info(),
-            authority: ctx.accounts.s.to_account_info(),
-        },
-    );
-    token::approve(cpi_ctx, u64::MAX)?;
 
     // ── CRITICAL: Symmetric dual-lock ─────────────────────────────────
     // Party A: PendingInitiator → BothPending
@@ -138,7 +103,7 @@ pub fn handler(ctx: Context<AcceptCommit>) -> Result<()> {
     });
 
     msg!(
-        "accept_commit: {} accepted, delegate approved, execute window closes {}",
+        "accept_commit: {} accepted, execute window closes {}",
         slot.counterparty,
         slot.execute_expiry
     );

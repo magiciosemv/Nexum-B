@@ -12,7 +12,7 @@ pub use utils::*;
 
 use anchor_lang::prelude::*;
 
-declare_id!("BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP");
+declare_id!("6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r");
 
 #[program]
 pub mod nexum_pool {
@@ -64,5 +64,17 @@ pub mod nexum_pool {
         params: instructions::write_proof_data::WriteProofDataParams,
     ) -> Result<()> {
         instructions::write_proof_data::handler(ctx, params)
+    }
+
+    pub fn initialize_vault(ctx: Context<InitializeVault>) -> Result<()> {
+        instructions::create_vault::handler(ctx)
+    }
+
+    pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+        instructions::deposit::handler(ctx, amount)
+    }
+
+    pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
+        instructions::withdraw::handler(ctx, amount)
     }
 }

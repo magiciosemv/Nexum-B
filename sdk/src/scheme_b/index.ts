@@ -220,6 +220,22 @@ export function findDelegatePDA(commitSlotKey: PublicKey, programId: PublicKey):
   );
 }
 
+/** Derive vault PDA token account. Seeds: ["vault", owner, mint]. */
+export function findVaultPDA(owner: PublicKey, mint: PublicKey, programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), owner.toBuffer(), mint.toBuffer()],
+    programId
+  );
+}
+
+/** Derive shared Treasury Vault PDA. Seeds: ["nexum_vault", mint]. One per mint globally. */
+export function findTreasuryVaultPDA(mint: PublicKey, programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("nexum_vault"), mint.toBuffer()],
+    programId
+  );
+}
+
 // ── Helper: split bigint amount into lo/hi u32 ──────────────────────
 
 export function splitAmount(amount: bigint): { lo: number; hi: number } {

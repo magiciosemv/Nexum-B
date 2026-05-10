@@ -296,7 +296,7 @@ function StageCommitting({ hash, t }: { hash: string; t: (zh: string, en: string
   );
 }
 
-function StageWaiting({ hash, slot, countdown, expiry, t }: { hash: string; slot: string; countdown: number; expiry: number; t: (zh: string, en: string) => string }) {
+function StageWaiting({ hash, slot, countdown, expiry, nonce, t }: { hash: string; slot: string; countdown: number; expiry: number; nonce: string; t: (zh: string, en: string) => string }) {
   const pct = expiry > 0 ? countdown / expiry : 0;
   const danger = pct < 0.3;
   return (
@@ -316,7 +316,7 @@ function StageWaiting({ hash, slot, countdown, expiry, t }: { hash: string; slot
             )}
           </div>
           <div className="mono" style={{ fontSize: 10, marginTop: 14, color: "#5a5a63", letterSpacing: ".1em" }}>
-            slot · {slot || "—"}<br />hash · {hash || "—"}
+            slot · {slot || "—"}<br />hash · {hash || "—"}<br />nonce · {nonce || "—"}
           </div>
         </div>
       </div>
@@ -399,18 +399,17 @@ function StageExecuting({ t }: { t: (zh: string, en: string) => string }) {
   );
 }
 
-function StageSettled({ commitSlotId, commitmentHash, settlementTxs, lastTxHash, t }: {
+function StageSettled({ commitSlotId, commitmentHash, settlementTxs, t }: {
   commitSlotId: string;
   commitmentHash: string;
-  settlementTxs: { txCreateProof: string; txsWriteProof: string[]; txExecute: string } | null;
-  lastTxHash: string;
+  settlementTxs: { txInitiate: string; txCreateProof: string; txsWriteProof: string[]; txExecute: string; settlementRecord: string } | null;
   t: (zh: string, en: string) => string;
 }) {
   const SOLSCAN = (sig: string) => `https://solscan.io/tx/${sig}?cluster=devnet`;
   const truncTx = (s: string) => s.length > 20 ? s.slice(0, 8) + "…" + s.slice(-6) : s;
 
   const allTxs: { label: string; sig: string }[] = [
-    { label: "INITIATE", sig: lastTxHash },
+    { label: "INITIATE", sig: settlementTxs?.txInitiate || "" },
     { label: "CREATE_PROOF", sig: settlementTxs?.txCreateProof || "" },
     ...(settlementTxs?.txsWriteProof || []).map((sig, i) => ({ label: `WRITE_CHUNK_${i}`, sig })),
     { label: "EXECUTE_SETTLE", sig: settlementTxs?.txExecute || "" },
@@ -441,6 +440,10 @@ function StageSettled({ commitSlotId, commitmentHash, settlementTxs, lastTxHash,
           <div style={{ color: "#5a5a63", fontSize: 9, letterSpacing: ".18em", marginBottom: 3 }}>PROOF_TXS</div>
           <div style={{ color: "var(--green)", wordBreak: "break-all" }}>{settlementTxs?.txsWriteProof?.length || 0} chunks + 1 create</div>
         </div>
+      </div>
+      <div style={{ marginTop: 10, fontSize: 11, fontFamily: "JetBrains Mono, monospace" }}>
+        <div style={{ color: "#5a5a63", fontSize: 9, letterSpacing: ".18em", marginBottom: 3 }}>SETTLEMENT_RECORD</div>
+        <div style={{ color: "#f4f1ea", wordBreak: "break-all" }}>{settlementTxs?.settlementRecord || "—"}</div>
       </div>
 
       {/* Transaction list with Solscan links */}
@@ -485,21 +488,21 @@ interface CenterStageProps {
   proofPctB: number;
   commitSlotId: string;
   commitmentHash: string;
-  settlementTxs: { txCreateProof: string; txsWriteProof: string[]; txExecute: string } | null;
+  settlementTxs: { txInitiate: string; txCreateProof: string; txsWriteProof: string[]; txExecute: string; settlementRecord: string } | null;
   amount: string;
   mintA: string;
   mintB: string;
   counterparty: string;
   expiry: number;
   error: string | null;
-  lastTxHash: string;
+  nonce: string;
   t: (zh: string, en: string) => string;
 }
 
 function CenterStage({
   state, countdown, proofPctA, proofPctB,
   commitSlotId, commitmentHash, settlementTxs,
-  amount, mintA, mintB, counterparty, expiry, error, lastTxHash,
+  amount, mintA, mintB, counterparty, expiry, error, nonce,
   t,
 }: CenterStageProps) {
   const aLocked = ["waiting_accept", "both_pending", "proving", "executing"].includes(state);
@@ -537,7 +540,7 @@ function CenterStage({
       {state === "drafting" && <StageHashing t={t} />}
       {state === "committing" && <StageCommitting hash={commitmentHash} t={t} />}
       {state === "waiting_accept" && (
-        <StageWaiting hash={commitmentHash} slot={commitSlotId} countdown={countdown} expiry={expiry} t={t} />
+        <StageWaiting hash={commitmentHash} slot={commitSlotId} countdown={countdown} expiry={expiry} nonce={nonce} t={t} />
       )}
       {state === "both_pending" && <StageBothPending countdown={countdown} t={t} />}
       {state === "proving" && (
@@ -545,7 +548,7 @@ function CenterStage({
       )}
       {state === "executing" && <StageExecuting t={t} />}
       {state === "settled" && (
-        <StageSettled commitSlotId={commitSlotId} commitmentHash={commitmentHash} settlementTxs={settlementTxs} lastTxHash={lastTxHash} t={t} />
+        <StageSettled commitSlotId={commitSlotId} commitmentHash={commitmentHash} settlementTxs={settlementTxs} t={t} />
       )}
     </div>
   );
@@ -563,10 +566,13 @@ export default function TraderTerminal({ lang, setLang }: TraderTerminalProps) {
 
   // ── Local form state ────────────────────────────────────────────────
   const [amount, setAmount] = useState("1000000");
-  const [mintA, setMintA] = useState("B31JoQhMFF2TrSJMdiSqCRGMj4jR8TD8sNzNGn4T4qQw");
-  const [mintB, setMintB] = useState("B31JoQhMFF2TrSJMdiSqCRGMj4jR8TD8sNzNGn4T4qQw");
+  const [mintA, setMintA] = useState("");
+  const [mintB, setMintB] = useState("");
   const [counterparty, setCounterparty] = useState("");
   const [expiry, setExpiry] = useState(55);
+  const [vaultDepositAmount, setVaultDepositAmount] = useState("1000000");
+  const [withdrawMint, setWithdrawMint] = useState("");
+  const [vaultBusy, setVaultBusy] = useState(false);
 
   // ── Proof animation state ───────────────────────────────────────────
   const [proofPctA, setProofPctA] = useState(0);
@@ -684,9 +690,29 @@ export default function TraderTerminal({ lang, setLang }: TraderTerminalProps) {
     }
   }, [schemeB]);
 
+  // ── Vault handlers ─────────────────────────────────────────────────
+  const handleDeposit = useCallback(async () => {
+    if (!mintA || !vaultDepositAmount) return;
+    setVaultBusy(true);
+    try {
+      await schemeB.depositToVault(mintA, BigInt(vaultDepositAmount));
+    } catch { /* error captured by hook */ }
+    setVaultBusy(false);
+  }, [schemeB, mintA, vaultDepositAmount]);
+
+  const handleWithdraw = useCallback(async () => {
+    const mint = withdrawMint || mintB || mintA;
+    if (!mint || !vaultDepositAmount) return;
+    setVaultBusy(true);
+    try {
+      await schemeB.withdrawFromVault(mint, BigInt(vaultDepositAmount));
+    } catch { /* error captured by hook */ }
+    setVaultBusy(false);
+  }, [schemeB, mintA, mintB, withdrawMint, vaultDepositAmount]);
+
   // ── Render ──────────────────────────────────────────────────────────
   return (
-    <div className="dark" style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+    <div className="dark" style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       {/* ── Top rail ──────────────────────────────────────────────────── */}
       <div style={{ padding: "14px 36px", display: "flex", alignItems: "center", gap: 20, borderBottom: "1px solid var(--d-line-2)", background: "var(--d-bg-2)" }}>
         <NexumSeal size={28} dark />
@@ -721,7 +747,7 @@ export default function TraderTerminal({ lang, setLang }: TraderTerminalProps) {
       <div style={{ flex: 1, display: "grid", gridTemplateColumns: "380px 1fr 460px", gap: 1, background: "var(--d-line)", minHeight: 0 }}>
 
         {/* ── LEFT — Order Ticket ──────────────────────────────────────── */}
-        <div style={{ background: "var(--d-bg)", padding: "24px 26px", overflowY: "auto" }}>
+        <div className="no-scrollbar" style={{ background: "var(--d-bg)", padding: "24px 26px", overflowY: "auto" }}>
           <div className="mono" style={{ fontSize: 10, letterSpacing: ".22em", color: "#9a9aa3", marginBottom: 14 }}>I · ORDER TICKET</div>
           <div className="serif" style={{ fontStyle: "italic", fontSize: 24, color: "#f4f1ea", marginBottom: 24, letterSpacing: "-.01em", lineHeight: 1.2 }}>
             {t("协商条款，提交意向。", "Draft terms, submit intent.")}
@@ -790,6 +816,56 @@ export default function TraderTerminal({ lang, setLang }: TraderTerminalProps) {
             <Row k={t("总计预估", "total est.")} v="~0.0027 SOL" highlight />
           </div>
 
+          {/* ── Vault Management ──────────────────────────────────────── */}
+          <div style={{ marginTop: 18, padding: "14px 16px", border: "1px solid var(--d-line-2)", background: "var(--d-bg-3)" }}>
+            <div className="mono" style={{ fontSize: 9, letterSpacing: ".2em", color: "#5a5a63", marginBottom: 8 }}>
+              {t("金库管理", "VAULT MANAGEMENT")}
+            </div>
+            <div style={{ fontSize: 11, color: "#9a9aa3", marginBottom: 12, lineHeight: 1.5 }}>
+              {t(
+                "结算前需将代币存入金库。首次存款会自动创建金库。结算只更新加密余额，不转移代币。",
+                "Deposit tokens before settlement. Vault auto-created on first deposit. Settlement only updates encrypted balances."
+              )}
+            </div>
+
+            <FormField label={t("存入数量", "DEPOSIT AMOUNT")}>
+              <input
+                value={vaultDepositAmount}
+                onChange={(e) => setVaultDepositAmount(e.target.value)}
+                placeholder="1000000"
+                style={inpStyle}
+              />
+            </FormField>
+
+            <FormField label={t("取出的 Mint 地址 (你收到的 Token)", "WITHDRAW MINT (TOKEN YOU RECEIVE)")}>
+              <input
+                value={withdrawMint}
+                onChange={(e) => setWithdrawMint(e.target.value)}
+                placeholder={t("留空则默认 Mint B", "defaults to Mint B if empty")}
+                style={inpStyle}
+              />
+            </FormField>
+
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <button
+                onClick={handleDeposit}
+                className="btn accent"
+                style={{ flex: 1, justifyContent: "center", fontSize: 10 }}
+                disabled={!mintA || !vaultDepositAmount || vaultBusy}
+              >
+                {t("存入金库", "DEPOSIT")}
+              </button>
+              <button
+                onClick={handleWithdraw}
+                className="btn"
+                style={{ flex: 1, justifyContent: "center", fontSize: 10, borderColor: "var(--green)", color: "var(--green)" }}
+                disabled={(!mintA && !mintB && !withdrawMint) || !vaultDepositAmount || vaultBusy}
+              >
+                {t("从金库取出", "WITHDRAW")}
+              </button>
+            </div>
+          </div>
+
           <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 10 }}>
             {visualState === "error" && schemeB.error && (
               <div className="mono" style={{ fontSize: 11, color: "var(--danger)", padding: "8px 12px", border: "1px solid var(--danger)", borderRadius: 4, wordBreak: "break-all" }}>
@@ -810,7 +886,7 @@ export default function TraderTerminal({ lang, setLang }: TraderTerminalProps) {
                 </button>
                 {visualState === "error" && (
                   <button
-                    onClick={() => schemeB.forceCancel()}
+                    onClick={() => schemeB.forceCancel(mintA)}
                     className="btn lg"
                     style={{ width: "100%", justifyContent: "center", borderColor: "var(--danger)", color: "var(--danger)" }}
                   >
@@ -831,7 +907,7 @@ export default function TraderTerminal({ lang, setLang }: TraderTerminalProps) {
         </div>
 
         {/* ── CENTER — Settlement Stage ────────────────────────────────── */}
-        <div style={{ background: "var(--d-bg-2)", padding: "24px 32px", overflowY: "auto" }}>
+        <div className="no-scrollbar" style={{ background: "var(--d-bg-2)", padding: "24px 32px", overflowY: "auto" }}>
           <div className="mono" style={{ fontSize: 10, letterSpacing: ".22em", color: "#9a9aa3", marginBottom: 14 }}>II · SETTLEMENT STAGE</div>
 
           <CenterStage
@@ -848,7 +924,7 @@ export default function TraderTerminal({ lang, setLang }: TraderTerminalProps) {
             counterparty={counterparty}
             expiry={expiry}
             error={schemeB.error}
-            lastTxHash={schemeB.lastTxHash}
+            nonce={schemeB.nonce}
             t={t}
           />
 
@@ -896,6 +972,7 @@ export default function TraderTerminal({ lang, setLang }: TraderTerminalProps) {
           </div>
           <div
             ref={logRef}
+            className="no-scrollbar"
             style={{ flex: 1, overflowY: "auto", padding: "14px 22px", fontFamily: "JetBrains Mono, monospace", fontSize: 11.5, lineHeight: 1.65 }}
           >
             {parsedLogs.length === 0 && (

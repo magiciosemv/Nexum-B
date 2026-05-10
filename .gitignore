@@ -32,3 +32,10 @@ app/dist/
 
 # Local keys (devnet test keypairs)
 scripts/keys/
+
+# Large circuit build artifacts
+*.ptau
+*.r1cs
+*.zip
+circuits/build_private/
+circuits/build/verification_key.json.private

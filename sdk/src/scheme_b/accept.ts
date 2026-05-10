@@ -3,18 +3,17 @@
  *
  * Counterparty fetches on-chain CommitSlot, locally verifies the commitment hash
  * matches both agreed amounts, then submits accept_commit to:
- * 1. Approve delegate PDA on Party B's token account (for B→A transfer)
- * 2. Symmetrically lock both balances
+ * 1. Symmetrically lock both balances
  *
+ * Vault model: no delegate approval needed (tokens already in vaults).
  * ~50,000 CU, no ZK verification.
  */
 
 import * as anchor from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { verifyCommitment } from "../crypto/commitment";
-import { findLedgerPDA, findConfigPDA, findDelegatePDA, findAssociatedTokenAddress, splitAmount } from "./index";
-
-const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+import { findLedgerPDA, findConfigPDA, splitAmount } from "./index";
+import { sendAndConfirmPolling } from "../utils/send_tx";
 
 export interface AcceptParams {
   commit_slot_id: PublicKey;
@@ -78,12 +77,8 @@ export async function acceptCommit(
   const [ledgerB] = findLedgerPDA(wallet.publicKey, slot.assetBMint, program.programId);
   const [configPda] = findConfigPDA(program.programId);
 
-  // SPL token accounts for delegate approval
-  const partyBToken = findAssociatedTokenAddress(wallet.publicKey, new PublicKey(slot.assetBMint));
-  const [delegatePda] = findDelegatePDA(params.commit_slot_id, program.programId);
-
   // ── Submit accept_commit transaction ───────────────────────────────
-  const sig = await program.methods
+  const tx = await program.methods
     .acceptCommit()
     .accounts({
       s: wallet.publicKey,
@@ -91,11 +86,10 @@ export async function acceptCommit(
       ledgerB: ledgerB,
       commitSlot: params.commit_slot_id,
       config: configPda,
-      partyBToken: partyBToken,
-      delegate: delegatePda,
-      tokenProgram: TOKEN_PROGRAM_ID,
     })
-    .rpc({ commitment: "confirmed" });
+    .transaction();
+
+  const sig = await sendAndConfirmPolling(program.provider.connection, wallet, tx);
 
   return { commit_slot_id: params.commit_slot_id, tx_signature: sig };
 }
