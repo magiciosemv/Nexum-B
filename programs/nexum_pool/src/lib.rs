@@ -77,4 +77,19 @@ pub mod nexum_pool {
     pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
         instructions::withdraw::handler(ctx, amount)
     }
+
+    pub fn register_regulator(
+        ctx: Context<RegisterRegulator>,
+        regulator_pubkey: [u8; 64],
+    ) -> Result<()> {
+        instructions::register_regulator::handler(ctx, regulator_pubkey)
+    }
+
+    pub fn migrate_config(ctx: Context<MigrateConfig>) -> Result<()> {
+        instructions::migrate_config::handler(ctx)
+    }
+
+    pub fn migrate_ledger(ctx: Context<MigrateLedger>) -> Result<()> {
+        instructions::migrate_ledger::handler(ctx)
+    }
 }

@@ -63,7 +63,7 @@ pub struct ExecuteSettleB<'info> {
     )]
     pub commit_slot: Box<Account<'info, CommitSlot>>,
 
-    /// Proof data account — holds ZK proofs and ciphertexts (1537B). Boxed.
+    /// Proof data account — holds ZK proofs and ciphertexts (2065B). Boxed.
     /// PDA seeds: ["proofs", nonce.to_le_bytes()]
     /// Created off-chain by the submitting party before calling execute.
     #[account(
@@ -170,6 +170,8 @@ pub fn handler(ctx: Context<ExecuteSettleB>, p: SettleAtomicParams) -> Result<()
     la.balance_ct_hi = proofs.new_ct_a_hi;
     la.audit_ct_lo = proofs.audit_ct_a_lo;
     la.audit_ct_hi = proofs.audit_ct_a_hi;
+    la.regulator_ct_lo = proofs.regulator_ct_a_lo;
+    la.regulator_ct_hi = proofs.regulator_ct_a_hi;
     la.version = la.version.checked_add(1).unwrap();
     la.status = LedgerStatus::Active;
     la.last_settlement_id = ctx.accounts.settlement_record.key().to_bytes();
@@ -180,6 +182,8 @@ pub fn handler(ctx: Context<ExecuteSettleB>, p: SettleAtomicParams) -> Result<()
     lb.balance_ct_hi = proofs.new_ct_b_hi;
     lb.audit_ct_lo = proofs.audit_ct_b_lo;
     lb.audit_ct_hi = proofs.audit_ct_b_hi;
+    lb.regulator_ct_lo = proofs.regulator_ct_b_lo;
+    lb.regulator_ct_hi = proofs.regulator_ct_b_hi;
     lb.version = lb.version.checked_add(1).unwrap();
     lb.status = LedgerStatus::Active;
     lb.last_settlement_id = ctx.accounts.settlement_record.key().to_bytes();

@@ -4,11 +4,13 @@ use crate::errors::NexumError;
 
 /// Write a chunk of proof/ciphertext data to a ProofData account.
 ///
-/// ProofData has 1536 bytes of data arrays, split into 4 chunks:
+/// ProofData has 2048 bytes of data arrays, split into 6 chunks:
 ///   Chunk 0: proof_a (256 bytes)
 ///   Chunk 1: new_ct_a_lo(128) + new_ct_a_hi(128) + audit_ct_a_lo(128) + audit_ct_a_hi(128) = 512 bytes
 ///   Chunk 2: proof_b (256 bytes)
 ///   Chunk 3: new_ct_b_lo(128) + new_ct_b_hi(128) + audit_ct_b_lo(128) + audit_ct_b_hi(128) = 512 bytes
+///   Chunk 4: regulator_ct_a_lo(128) + regulator_ct_a_hi(128) = 256 bytes
+///   Chunk 5: regulator_ct_b_lo(128) + regulator_ct_b_hi(128) = 256 bytes
 ///
 /// This instruction is called after create_proof_data to populate the account
 /// with real ZK proof + ciphertext data. The account must already exist.
@@ -74,6 +76,16 @@ pub fn handler(ctx: Context<WriteProofData>, params: WriteProofDataParams) -> Re
             data.new_ct_b_hi.copy_from_slice(&payload[128..256]);
             data.audit_ct_b_lo.copy_from_slice(&payload[256..384]);
             data.audit_ct_b_hi.copy_from_slice(&payload[384..512]);
+        }
+        4 => {
+            require!(payload.len() == 256, NexumError::InvalidChunkSize);
+            data.regulator_ct_a_lo.copy_from_slice(&payload[0..128]);
+            data.regulator_ct_a_hi.copy_from_slice(&payload[128..256]);
+        }
+        5 => {
+            require!(payload.len() == 256, NexumError::InvalidChunkSize);
+            data.regulator_ct_b_lo.copy_from_slice(&payload[0..128]);
+            data.regulator_ct_b_hi.copy_from_slice(&payload[128..256]);
         }
         _ => {
             return Err(NexumError::InvalidChunkIndex.into());

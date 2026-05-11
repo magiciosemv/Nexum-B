@@ -20,7 +20,8 @@ impl Default for LedgerStatus {
 ///
 /// Scheme A size: 610 bytes (discriminator 8 + data 602)
 /// Scheme B adds: 112 bytes of pending fields
-/// Total: 738 bytes (discriminator 8 + data 714)
+/// Regulator adds: 256 bytes of regulator ciphertexts
+/// Total: 994 bytes (discriminator 8 + data 970)
 ///
 /// Layout:
 ///   owner               32B
@@ -59,6 +60,10 @@ pub struct UserLedger {
     pub pending_counterparty: Pubkey,
     pub pending_asset_b_mint: Pubkey,
     pub pending_nonce: u64,
+
+    // ── Regulator ciphertexts (256 bytes) ───────────────────────────
+    pub regulator_ct_lo: [u8; 128],   // Regulator-encrypted balance low 32 bits
+    pub regulator_ct_hi: [u8; 128],   // Regulator-encrypted balance high 32 bits
 }
 
 impl Default for UserLedger {
@@ -79,13 +84,15 @@ impl Default for UserLedger {
             pending_counterparty: Pubkey::default(),
             pending_asset_b_mint: Pubkey::default(),
             pending_nonce: 0,
+            regulator_ct_lo: [0u8; 128],
+            regulator_ct_hi: [0u8; 128],
         }
     }
 }
 
 impl UserLedger {
-    // 8(discrim) + 32 + 32 + 128×4 + 8 + 1 + 32 + 1 + 32 + 8 + 32 + 32 + 8
-    // = 8 + 602 + 112 = 738 bytes (includes discriminator? Let me recount)
+    // 8(discrim) + 32 + 32 + 128×4 + 8 + 1 + 32 + 1 + 32 + 8 + 32 + 32 + 8 + 128×2
+    // = 8 + 602 + 112 + 256 = 994 bytes
     //
     // discriminator: 8
     // owner: 32
@@ -103,7 +110,9 @@ impl UserLedger {
     // pending_counterparty: 32
     // pending_asset_b_mint: 32
     // pending_nonce: 8
-    // Total: 8 + 32 + 32 + 512 + 8 + 1 + 32 + 1 + 32 + 8 + 32 + 32 + 8 = 738
+    // regulator_ct_lo: 128
+    // regulator_ct_hi: 128
+    // Total: 8 + 32 + 32 + 512 + 8 + 1 + 32 + 1 + 32 + 8 + 32 + 32 + 8 + 256 = 994
     pub const LEN: usize = 8  // discriminator
         + 32                  // owner
         + 32                  // mint
@@ -119,7 +128,9 @@ impl UserLedger {
         + 8                   // pending_expiry
         + 32                  // pending_counterparty
         + 32                  // pending_asset_b_mint
-        + 8;                  // pending_nonce
+        + 8                   // pending_nonce
+        + 128                 // regulator_ct_lo
+        + 128;                // regulator_ct_hi
 
     /// Clear all pending fields. MUST be called in execute_settle_b, cancel_initiate,
     /// and cancel_mutual after state transitions.
@@ -144,10 +155,10 @@ mod tests {
 
     #[test]
     fn test_ledger_len_constant() {
-        // Verify LEN matches manual calculation
-        let expected = 8 + 32 + 32 + 128 * 4 + 8 + 1 + 32 + 1 + 32 + 8 + 32 + 32 + 8;
+        // Verify LEN matches manual calculation (includes regulator ciphertexts)
+        let expected = 8 + 32 + 32 + 128 * 4 + 8 + 1 + 32 + 1 + 32 + 8 + 32 + 32 + 8 + 128 * 2;
         assert_eq!(UserLedger::LEN, expected, "UserLedger::LEN mismatch");
-        assert_eq!(UserLedger::LEN, 738, "UserLedger must be exactly 738 bytes");
+        assert_eq!(UserLedger::LEN, 994, "UserLedger must be exactly 994 bytes");
     }
 
     #[test]

@@ -25,7 +25,7 @@ pub struct CancelInitiate<'info> {
             > ledger_a.pending_expiry + config.clock_tolerance
             @ NexumError::WindowNotExpired,
     )]
-    pub ledger_a: Account<'info, UserLedger>,
+    pub ledger_a: Box<Account<'info, UserLedger>>,
 
     /// CommitSlot to close — rent returned to Party A.
     #[account(

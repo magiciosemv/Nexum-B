@@ -21,6 +21,8 @@ export {
 } from "./crypto/elgamal";
 export type { ElGamalKeypair, ElGamalCiphertext } from "./crypto/elgamal";
 
+export { deriveRegulatorKey, unpackRegulatorPubkey } from "./crypto/regulator_key";
+
 export {
   findCommitSlotPDA,
   findVersionSlotPDA,
@@ -51,6 +53,7 @@ export type { WithdrawParams, WithdrawResult } from "./scheme_b/withdraw";
 export { initializeVault } from "./scheme_b/create_vault";
 export type { InitializeVaultParams, InitializeVaultResult } from "./scheme_b/create_vault";
 export { cancelInitiate, cancelMutual } from "./scheme_b/cancel";
+export { registerRegulator } from "./scheme_b/register_regulator";
 export { VersionSlotManager } from "./scheme_b/version_slots";
 export type { SlotInfo } from "./scheme_b/version_slots";
 export { CommitSlotListener } from "./listeners/commit_listener";

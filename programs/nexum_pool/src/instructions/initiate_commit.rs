@@ -32,7 +32,7 @@ pub struct InitiateCommit<'info> {
         constraint = p.counterparty != ledger_a.owner
             @ NexumError::SelfSettle,
     )]
-    pub ledger_a: Account<'info, UserLedger>,
+    pub ledger_a: Box<Account<'info, UserLedger>>,
 
     /// New CommitSlot — stores the commitment hash and metadata.
     #[account(

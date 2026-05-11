@@ -743,7 +743,7 @@
         {
           "name": "proof_data",
           "docs": [
-            "Proof data account — holds ZK proofs and ciphertexts (1537B). Boxed.",
+            "Proof data account — holds ZK proofs and ciphertexts (2065B). Boxed.",
             "PDA seeds: [\"proofs\", nonce.to_le_bytes()]",
             "Created off-chain by the submitting party before calling execute."
           ],
@@ -1088,6 +1088,141 @@
             "defined": {
               "name": "InitiateCommitParams"
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "migrate_config",
+      "discriminator": [
+        92,
+        131,
+        58,
+        105,
+        210,
+        154,
+        224,
+        193
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "migrate_ledger",
+      "discriminator": [
+        76,
+        85,
+        118,
+        244,
+        156,
+        189,
+        103,
+        63
+      ],
+      "accounts": [
+        {
+          "name": "ledger",
+          "writable": true
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "register_regulator",
+      "discriminator": [
+        144,
+        230,
+        83,
+        144,
+        145,
+        242,
+        157,
+        178
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  120,
+                  117,
+                  109,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "regulator_pubkey",
+          "type": {
+            "array": [
+              "u8",
+              64
+            ]
           }
         }
       ]
@@ -1499,7 +1634,7 @@
     {
       "code": 6023,
       "name": "InvalidChunkIndex",
-      "msg": "Chunk index must be 0-3"
+      "msg": "Chunk index must be 0-5"
     },
     {
       "code": 6024,
@@ -1520,6 +1655,11 @@
       "code": 6027,
       "name": "InvalidZkVerifierProgram",
       "msg": "Invalid ZK verifier program ID"
+    },
+    {
+      "code": 6028,
+      "name": "UnauthorizedRegulator",
+      "msg": "Unauthorized: only governance authority can register regulator key"
     }
   ],
   "types": [
@@ -1931,6 +2071,42 @@
             }
           },
           {
+            "name": "regulator_ct_a_lo",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "regulator_ct_a_hi",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "regulator_ct_b_lo",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "regulator_ct_b_hi",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
             "name": "nonce",
             "type": "u64"
           },
@@ -1981,6 +2157,19 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "regulator_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "regulator_pubkey",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
           }
         ]
       }
@@ -2122,7 +2311,8 @@
         "",
         "Scheme A size: 610 bytes (discriminator 8 + data 602)",
         "Scheme B adds: 112 bytes of pending fields",
-        "Total: 738 bytes (discriminator 8 + data 714)",
+        "Regulator adds: 256 bytes of regulator ciphertexts",
+        "Total: 994 bytes (discriminator 8 + data 970)",
         "",
         "Layout:",
         "owner               32B",
@@ -2238,6 +2428,24 @@
           {
             "name": "pending_nonce",
             "type": "u64"
+          },
+          {
+            "name": "regulator_ct_lo",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
+          },
+          {
+            "name": "regulator_ct_hi",
+            "type": {
+              "array": [
+                "u8",
+                128
+              ]
+            }
           }
         ]
       }
@@ -2247,11 +2455,13 @@
       "docs": [
         "Write a chunk of proof/ciphertext data to a ProofData account.",
         "",
-        "ProofData has 1536 bytes of data arrays, split into 4 chunks:",
+        "ProofData has 2048 bytes of data arrays, split into 6 chunks:",
         "Chunk 0: proof_a (256 bytes)",
         "Chunk 1: new_ct_a_lo(128) + new_ct_a_hi(128) + audit_ct_a_lo(128) + audit_ct_a_hi(128) = 512 bytes",
         "Chunk 2: proof_b (256 bytes)",
         "Chunk 3: new_ct_b_lo(128) + new_ct_b_hi(128) + audit_ct_b_lo(128) + audit_ct_b_hi(128) = 512 bytes",
+        "Chunk 4: regulator_ct_a_lo(128) + regulator_ct_a_hi(128) = 256 bytes",
+        "Chunk 5: regulator_ct_b_lo(128) + regulator_ct_b_hi(128) = 256 bytes",
         "",
         "This instruction is called after create_proof_data to populate the account",
         "with real ZK proof + ciphertext data. The account must already exist.",

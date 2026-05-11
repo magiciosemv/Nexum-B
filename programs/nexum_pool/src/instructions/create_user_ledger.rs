@@ -14,7 +14,7 @@ pub struct CreateUserLedger<'info> {
         seeds = [b"ledger", owner.key().as_ref(), mint.key().as_ref()],
         bump,
     )]
-    pub ledger: Account<'info, UserLedger>,
+    pub ledger: Box<Account<'info, UserLedger>>,
 
     /// CHECK: The mint address, stored for PDA derivation
     pub mint: AccountInfo<'info>,

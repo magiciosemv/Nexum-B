@@ -19,7 +19,7 @@ pub struct ReserveVersionSlots<'info> {
         seeds = [b"ledger", ledger.owner.as_ref(), ledger.mint.as_ref()],
         bump = ledger.bump,
     )]
-    pub ledger: Account<'info, UserLedger>,
+    pub ledger: Box<Account<'info, UserLedger>>,
 
     pub system_program: Program<'info, System>,
 }

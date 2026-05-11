@@ -46,7 +46,7 @@ function parseSettlementRecord(buf: Buffer) {
     versionA: Number(buf.readBigUInt64LE(168)),
     versionB: Number(buf.readBigUInt64LE(176)),
     scheme: buf[184],
-    settledAt: buf.readUInt32LE(185),
+    settledAt: Number(buf.readBigUInt64LE(185)),
     bump: buf[193],
   };
 }

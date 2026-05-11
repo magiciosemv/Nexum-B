@@ -15,8 +15,8 @@ RPC = "https://devnet.helius-rpc.com/?api-key=506b80b3-cae1-4a10-bd37-b048aa5dd8
 LABELS = {
     "CjnKTv7fxuEDU91n1nkcLe536kfbvV7o4cA9mJAA68Ue": "Party A (signer)",
     "A7XDkScUEunJ59cZeBJGA1WivnSc2QDp3jB5ugEf5vgR": "Party B",
-    "BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP": "nexum_pool",
-    "6X4MCKGaZHVUpzVKJSmgZgUcK5ZTvxPixK4f3ARNfPyN": "zk_verifier",
+    "6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r": "nexum_pool",
+    "HBjtDNTL5cj6oc97Gno14x8GjL6LNsZ26iRK4v52KjDA": "zk_verifier",
     "CNM1YpLiFdeKj2MC3F6q18fUhpCkADXScGciz9C7Lmm5": "ProtocolConfig",
     "11111111111111111111111111111111": "System Program",
     "ComputeBudget111111111111111111111111111111": "ComputeBudget",

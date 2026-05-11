@@ -13,7 +13,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { getAccount, getAssociatedTokenAddressSync } from "@solana/spl-token";
 
 const RPC = "https://devnet.helius-rpc.com/?api-key=506b80b3-cae1-4a10-bd37-b048aa5dd8a5";
-const PROGRAM_ID = new PublicKey("BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP");
+const PROGRAM_ID = new PublicKey("6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r");
 
 const DISC_MAP = {
   "b95465800806a053": "UserLedger",

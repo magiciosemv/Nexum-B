@@ -62,7 +62,7 @@ const { Connection, PublicKey, SystemProgram, Keypair } = require('@solana/web3.
 
 // ── 4. Config ──────────────────────────────────────────────────────────
 const RPC = process.env.ANCHOR_PROVIDER_URL || 'https://devnet.helius-rpc.com/?api-key=506b80b3-cae1-4a10-bd37-b048aa5dd8a5';
-const PROGRAM_ID = new PublicKey('BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP');
+const PROGRAM_ID = new PublicKey('6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r');
 const LEDGER_A = new PublicKey(process.argv[2] || (() => { console.error('Usage: node auto-accept.js <LEDGER_A_ADDRESS>'); process.exit(1); })());
 const CONFIG = new PublicKey('CNM1YpLiFdeKj2MC3F6q18fUhpCkADXScGciz9C7Lmm5');
 const CP_KEY_PATH = path.join(__dirname, 'keys', 'counterparty.json');

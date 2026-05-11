@@ -29,6 +29,8 @@ pub fn handler(ctx: Context<InitializePool>) -> Result<()> {
     config.clock_tolerance = CLOCK_TOLERANCE;
     config.max_version_slots = MAX_VERSION_SLOTS;
     config.bump = ctx.bumps.config;
+    config.regulator_authority = Pubkey::default();
+    config.regulator_pubkey = [0u8; 64];
 
     msg!("Protocol initialized with default config");
     Ok(())

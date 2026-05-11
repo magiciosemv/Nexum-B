@@ -18,7 +18,7 @@ if [ -z "$1" ]; then
   echo "Usage: ./devnet-auto-accept.sh <LEDGER_A_ADDRESS>"
   echo ""
   echo "  LEDGER_A_ADDRESS: The PDA of the initiator's UserLedger"
-  echo "  Derive with: node -e \"const {PublicKey}=require('@solana/web3.js'); const [a]=PublicKey.findProgramAddressSync([Buffer.from('ledger'),new PublicKey('<OWNER>').toBuffer(),new PublicKey('<MINT>').toBuffer()],new PublicKey('BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP')); console.log(a.toBase58());\""
+  echo "  Derive with: node -e \"const {PublicKey}=require('@solana/web3.js'); const [a]=PublicKey.findProgramAddressSync([Buffer.from('ledger'),new PublicKey('<OWNER>').toBuffer(),new PublicKey('<MINT>').toBuffer()],new PublicKey('6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r')); console.log(a.toBase58());\""
   exit 1
 fi
 

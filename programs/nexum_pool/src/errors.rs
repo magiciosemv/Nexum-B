@@ -61,7 +61,7 @@ pub enum NexumError {
     // ── Proof data errors ──────────────────────────────────────────────
     #[msg("Proof data nonce does not match instruction nonce")]
     InvalidNonce,
-    #[msg("Chunk index must be 0-3")]
+    #[msg("Chunk index must be 0-5")]
     InvalidChunkIndex,
     #[msg("Chunk data size does not match expected size for this chunk index")]
     InvalidChunkSize,
@@ -73,4 +73,8 @@ pub enum NexumError {
     InvalidAmount,
     #[msg("Invalid ZK verifier program ID")]
     InvalidZkVerifierProgram,
+
+    // ── Regulator errors ─────────────────────────────────────────────
+    #[msg("Unauthorized: only governance authority can register regulator key")]
+    UnauthorizedRegulator,
 }

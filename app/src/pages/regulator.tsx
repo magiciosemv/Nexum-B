@@ -10,16 +10,16 @@
 import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PublicKey } from '@solana/web3.js';
+import { useWallet } from '@solana/wallet-adapter-react';
 import { NexumSeal, Wordmark, Slot } from '../components/atoms';
 import { useAnchorContext } from '../context/WalletProvider';
-import { deserializeCiphertext, elgamalDecryptU32 as decryptU32, findLedgerPDA } from '@nexum/sdk';
+import { deserializeCiphertext, elgamalDecryptU32 as decryptU32, findLedgerPDA, deriveRegulatorKey } from '@nexum/sdk';
 
 // ── Raw byte parsers (IDL lacks field definitions, Anchor can't deserialize) ──
 
 /** Parse SettlementRecord from raw account bytes (202B deployed layout).
- *  Verified on-chain byte offsets:
  *  disc(8) + party_a(32) + party_b(32) + asset_a(32) + asset_b(32) + hash(32)
- *  + verA(8) + verB(8) + scheme(1) + settled_at(u32 at 185) + bump(1). */
+ *  + verA(8) + verB(8) + scheme(1) + settled_at(i64 at 185, 8B) + bump(1). */
 function parseSettlementRecord(buf: Buffer): SettlementRecordData {
   const partyA = new PublicKey(buf.slice(8, 40)).toBase58();
   const partyB = new PublicKey(buf.slice(40, 72)).toBase58();
@@ -29,33 +29,34 @@ function parseSettlementRecord(buf: Buffer): SettlementRecordData {
   const versionA = Number(buf.readBigUInt64LE(168));
   const versionB = Number(buf.readBigUInt64LE(176));
   const scheme = buf[184]; // 0=SchemeA, 1=SchemeB
-  const settledAt = buf.readUInt32LE(185); // u32, not i64
+  const settledAt = Number(buf.readBigUInt64LE(185)); // i64 (8 bytes)
   const bump = buf[193];
   return { partyA, partyB, assetAMint, assetBMint, commitmentHash, versionA, versionB, scheme, settledAt, bump };
 }
 
-/** Read raw UserLedger ciphertexts at correct byte offsets.
- *  Offsets determined from on-chain verification: balance_ct_lo at 72, balance_ct_hi at 200.
- *  The deployed program's struct layout is 2 bytes shorter than current source code. */
-function parseLedgerCiphertexts(buf: Buffer): { ctLo: Uint8Array; ctHi: Uint8Array; version: number; status: number } {
-  const OWNER_OFFSET = 8;
-  const MINT_OFFSET = 40;
-  const CT_LO_OFFSET = 72;  // deployed offset (current code: 74)
-  const CT_HI_OFFSET = 200; // deployed offset (current code: 202)
-  const VERSION_OFFSET = 584; // deployed offset (current code: 586)
-  const STATUS_OFFSET = 592;  // deployed offset (current code: 594)
+/** Read raw UserLedger ciphertexts at correct byte offsets (994B layout).
+ *  balance_ct_lo at 72, balance_ct_hi at 200.
+ *  regulator_ct_lo at 738, regulator_ct_hi at 866. */
+function parseLedgerCiphertexts(buf: Buffer): {
+  ctLo: Uint8Array; ctHi: Uint8Array;
+  regCtLo: Uint8Array; regCtHi: Uint8Array;
+  version: number; status: number;
+} {
+  const CT_LO_OFFSET = 72;
+  const CT_HI_OFFSET = 200;
+  const VERSION_OFFSET = 584;
+  const STATUS_OFFSET = 592;
+  // Regulator ciphertext offsets (994B layout)
+  const REG_CT_LO_OFFSET = 738;
+  const REG_CT_HI_OFFSET = 866;
 
-  const ctLo = buf.slice(CT_LO_OFFSET, CT_LO_OFFSET + 128);
-  const ctHi = buf.slice(CT_HI_OFFSET, CT_HI_OFFSET + 128);
-  const version = Number(buf.readBigUInt64LE(VERSION_OFFSET));
-  const status = buf[STATUS_OFFSET];
-
-  // Verify owner/mint match expected positions
   return {
-    ctLo: new Uint8Array(ctLo),
-    ctHi: new Uint8Array(ctHi),
-    version,
-    status,
+    ctLo: new Uint8Array(buf.slice(CT_LO_OFFSET, CT_LO_OFFSET + 128)),
+    ctHi: new Uint8Array(buf.slice(CT_HI_OFFSET, CT_HI_OFFSET + 128)),
+    regCtLo: new Uint8Array(buf.slice(REG_CT_LO_OFFSET, REG_CT_LO_OFFSET + 128)),
+    regCtHi: new Uint8Array(buf.slice(REG_CT_HI_OFFSET, REG_CT_HI_OFFSET + 128)),
+    version: Number(buf.readBigUInt64LE(VERSION_OFFSET)),
+    status: buf[STATUS_OFFSET],
   };
 }
 
@@ -68,7 +69,7 @@ interface RegulatorChamberProps {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const PROGRAM_ID = new PublicKey('BEYVFMVorvgbZs69bjKs9MNMUuRfscMv3HzMH6m9BoYP');
+const PROGRAM_ID = new PublicKey('6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r');
 
 /** Known devnet SettlementRecord addresses for the sample-ID panel. */
 const SAMPLE_SETTLEMENT_IDS = [
@@ -91,7 +92,7 @@ interface SettlementRecordData {
   versionA: number;
   versionB: number;
   scheme: number;           // 0 = SchemeA, 1 = SchemeB
-  settledAt: number;        // i64 -> seconds since epoch
+  settledAt: number;        // i64 (8 bytes) -> seconds since epoch
   bump: number;
 }
 
@@ -339,6 +340,7 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
   const t: TranslateFn = (zh, en) => lang === 'zh' ? zh : en;
   const navigate = useNavigate();
   const { program, publicKey } = useAnchorContext();
+  const { signMessage } = useWallet();
 
   // ── State ──────────────────────────────────────────────────────────────
 
@@ -349,19 +351,32 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
   const [errorMsg, setErrorMsg] = useState('');
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
 
-  // Decryption state — two keys (one per party)
-  const [privateKeyA, setPrivateKeyA] = useState('');
-  const [privateKeyB, setPrivateKeyB] = useState('');
+  // Decryption state — wallet-derived regulator key
+  const [regulatorKey, setRegulatorKey] = useState<bigint | null>(null);
+  const [walletPubkeyHex, setWalletPubkeyHex] = useState('');
+  const [isSigning, setIsSigning] = useState(false);
   const [decryptedBalances, setDecryptedBalances] = useState<DecryptedBalances | null>(null);
   const [decryptError, setDecryptError] = useState('');
 
-  // Load saved ElGamal keys from localStorage (saved during settlement)
-  const savedKeys = (() => {
+  // ── Wallet signing: derive regulator ElGamal key ─────────────────────
+
+  const signWithWallet = useCallback(async () => {
+    if (!signMessage) {
+      setDecryptError('Wallet does not support signMessage');
+      return;
+    }
+    setIsSigning(true);
+    setDecryptError('');
     try {
-      const raw = localStorage.getItem('nexum_elgamal_keys');
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
-  })();
+      const { privateKey, publicKey: pubBytes } = await deriveRegulatorKey(signMessage);
+      setRegulatorKey(privateKey);
+      setWalletPubkeyHex(Array.from(pubBytes).map(b => b.toString(16).padStart(2, '0')).join(''));
+    } catch (e: any) {
+      setDecryptError(e?.message?.slice(0, 200) || 'Signing failed');
+    } finally {
+      setIsSigning(false);
+    }
+  }, [signMessage]);
 
   // ── Fetch Settlement Record ────────────────────────────────────────────
 
@@ -403,30 +418,23 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
     }
   }, [program, publicKey, lang]);
 
-  // \u2500\u2500 Unseal: Decrypt ElGamal ciphertexts with provided private key \u2500\u2500\u2500
+  // \u2500\u2500 Unseal: Decrypt regulator ciphertexts with wallet-derived key \u2500\u2500
 
   const unseal = useCallback(async () => {
-    if (!program || !record) return;
+    if (!program || !record || !regulatorKey) return;
 
     setDecryptError('');
     setPhase('unsealing');
 
     try {
-      // Parse private keys — each party has a separate key
-      const skA = privateKeyA.trim() ? BigInt(privateKeyA.trim()) : null;
-      const skB = privateKeyB.trim() ? BigInt(privateKeyB.trim()) : null;
-      if (!skA && !skB) throw new Error('Provide at least one private key');
-
       const partyA = new PublicKey(record.partyA);
       const partyB = new PublicKey(record.partyB);
       const mintA = new PublicKey(record.assetAMint);
       const mintB = new PublicKey(record.assetBMint);
 
-      // Derive ledger PDAs
       const [ledgerAAddr] = findLedgerPDA(partyA, mintA, program.programId);
       const [ledgerBAddr] = findLedgerPDA(partyB, mintB, program.programId);
 
-      // Fetch raw bytes — IDL lacks field definitions so Anchor can't deserialize
       const conn = program.provider.connection;
       const [ledgerARaw, ledgerBRaw] = await Promise.all([
         conn.getAccountInfo(ledgerAAddr),
@@ -436,29 +444,22 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
       if (!ledgerARaw) throw new Error(`Party A ledger not found: ${ledgerAAddr.toBase58()}`);
       if (!ledgerBRaw) throw new Error(`Party B ledger not found: ${ledgerBAddr.toBase58()}`);
 
-      // Parse ciphertexts at correct on-chain byte offsets
       const ledgerA = parseLedgerCiphertexts(Buffer.from(ledgerARaw.data));
       const ledgerB = parseLedgerCiphertexts(Buffer.from(ledgerBRaw.data));
 
-      // Decrypt Party A balance (requires Key A)
-      let aLo = 0, aHi = 0, balanceA = 0n;
-      if (skA) {
-        const aCtLo = deserializeCiphertext(ledgerA.ctLo);
-        const aCtHi = deserializeCiphertext(ledgerA.ctHi);
-        aLo = decryptU32(aCtLo, skA);
-        aHi = decryptU32(aCtHi, skA);
-        balanceA = (BigInt(aHi) << 32n) | BigInt(aLo);
-      }
+      // Decrypt Party A regulator balance
+      const aRegCtLo = deserializeCiphertext(ledgerA.regCtLo);
+      const aRegCtHi = deserializeCiphertext(ledgerA.regCtHi);
+      const aLo = decryptU32(aRegCtLo, regulatorKey);
+      const aHi = decryptU32(aRegCtHi, regulatorKey);
+      const balanceA = (BigInt(aHi) << 32n) | BigInt(aLo);
 
-      // Decrypt Party B balance (requires Key B)
-      let bLo = 0, bHi = 0, balanceB = 0n;
-      if (skB) {
-        const bCtLo = deserializeCiphertext(ledgerB.ctLo);
-        const bCtHi = deserializeCiphertext(ledgerB.ctHi);
-        bLo = decryptU32(bCtLo, skB);
-        bHi = decryptU32(bCtHi, skB);
-        balanceB = (BigInt(bHi) << 32n) | BigInt(bLo);
-      }
+      // Decrypt Party B regulator balance
+      const bRegCtLo = deserializeCiphertext(ledgerB.regCtLo);
+      const bRegCtHi = deserializeCiphertext(ledgerB.regCtHi);
+      const bLo = decryptU32(bRegCtLo, regulatorKey);
+      const bHi = decryptU32(bRegCtHi, regulatorKey);
+      const balanceB = (BigInt(bHi) << 32n) | BigInt(bLo);
 
       setDecryptedBalances({
         partyA: { lo: aLo, hi: aHi, balance: balanceA },
@@ -467,7 +468,6 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
 
       setPhase('revealed');
 
-      // Log decryption action
       setAuditLog(prev => [{
         ts: new Date().toISOString(),
         action: 'decrypt',
@@ -479,7 +479,7 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
       setDecryptError(msg.slice(0, 200));
       setPhase('demandKey');
     }
-  }, [program, record, privateKeyA, privateKeyB, fetchedAddr, publicKey]);
+  }, [program, record, regulatorKey, fetchedAddr, publicKey]);
 
   // ── Export JSON ────────────────────────────────────────────────────────
 
@@ -518,8 +518,8 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
     setFetchedAddr('');
     setPhase('input');
     setErrorMsg('');
-    setPrivateKeyA('');
-    setPrivateKeyB('');
+    setRegulatorKey(null);
+    setWalletPubkeyHex('');
     setDecryptedBalances(null);
     setDecryptError('');
   }, []);
@@ -677,82 +677,45 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
           {phase === 'demandKey' && record && (
             <div style={{ marginTop: 32, padding: '28px 32px', border: '1px solid var(--gold)', background: 'rgba(198,166,82,.06)' }}>
               <div className="mono" style={{ fontSize: 10, letterSpacing: '.22em', color: 'var(--gold)', marginBottom: 16 }}>
-                II · DEMAND KEY · ELGAMAL PRIVATE KEY REQUIRED
+                II · DEMAND KEY · WALLET SIGNATURE REQUIRED
               </div>
 
               <div style={{ marginBottom: 18, padding: '12px 16px', border: '1px dashed var(--d-line-2)', fontSize: 12, color: '#9a9aa3', lineHeight: 1.6 }}>
                 {t(
-                  '链上存储的是 ElGamal 密文。要解密余额，需要提供加密时使用的私钥（bigint 十进制字符串）。每个结算使用独立的临时密钥对。',
-                  'On-chain balances are ElGamal ciphertexts. To decrypt, provide the private key used during encryption (bigint decimal string). Each settlement uses an ephemeral keypair.'
+                  '监管方使用钱包签名派生 ElGamal 私钥，解密链上监管密文。同一钱包始终派生同一密钥。',
+                  'The regulator signs with their wallet to derive an ElGamal private key for decrypting on-chain regulator ciphertexts. Same wallet always derives the same key.'
                 )}
               </div>
-
-              {/* Auto-fill from saved keys */}
-              {savedKeys && (
-                <div style={{ marginBottom: 18, padding: '14px 16px', border: '1px solid var(--green)', background: 'rgba(31,111,62,.08)' }}>
-                  <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: 'var(--green)', marginBottom: 10 }}>
-                    {'✓'} SAVED ELGAMAL KEYS FOUND (from last settlement)
-                  </div>
-                  <button
-                    onClick={() => { setPrivateKeyA(savedKeys.keyA); setPrivateKeyB(savedKeys.keyB); }}
-                    className="btn"
-                    style={{ padding: '8px 12px', fontSize: 10, borderColor: 'var(--green)', color: 'var(--green)' }}
-                  >
-                    AUTO-FILL BOTH KEYS
-                  </button>
-                  <div className="mono" style={{ fontSize: 9, color: '#5a5a63', marginTop: 8 }}>
-                    Saved: {savedKeys.savedAt} · Party A: {savedKeys.partyA?.slice(0,8)}... · Party B: {savedKeys.partyB?.slice(0,8)}...
-                  </div>
-                </div>
-              )}
 
               <RecordHeader address={fetchedAddr} record={record} phase={phase} />
 
               <div style={{ marginTop: 20 }}>
-                <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: '#5a5a63', marginBottom: 6 }}>
-                  KEY A — DECRYPT PARTY A BALANCE (BIGINT DECIMAL)
-                </div>
-                <input
-                  value={privateKeyA}
-                  onChange={e => setPrivateKeyA(e.target.value)}
-                  placeholder="Party A ElGamal private key..."
-                  type="password"
-                  style={{
-                    width: '100%',
-                    background: 'var(--d-bg-3)',
-                    border: '1px solid var(--d-line-2)',
-                    color: '#f4f1ea',
-                    padding: '14px 16px',
-                    fontFamily: 'JetBrains Mono, monospace',
-                    fontSize: 14,
-                    letterSpacing: '.05em',
-                    outline: 'none',
-                    marginBottom: 14,
-                  }}
-                />
-
-                <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: '#5a5a63', marginBottom: 6 }}>
-                  KEY B — DECRYPT PARTY B BALANCE (BIGINT DECIMAL)
-                </div>
-                <input
-                  value={privateKeyB}
-                  onChange={e => setPrivateKeyB(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && (privateKeyA.trim() || privateKeyB.trim())) unseal(); }}
-                  placeholder="Party B ElGamal private key..."
-                  type="password"
-                  style={{
-                    width: '100%',
-                    background: 'var(--d-bg-3)',
-                    border: '1px solid var(--d-line-2)',
-                    color: '#f4f1ea',
-                    padding: '14px 16px',
-                    fontFamily: 'JetBrains Mono, monospace',
-                    fontSize: 14,
-                    letterSpacing: '.05em',
-                    outline: 'none',
-                    marginBottom: 14,
-                  }}
-                />
+                {!regulatorKey ? (
+                  <>
+                    <button
+                      onClick={signWithWallet}
+                      disabled={isSigning || !signMessage}
+                      className="btn solid"
+                      style={{ borderColor: 'var(--gold)', background: 'var(--gold)', color: 'var(--d-bg)', marginBottom: 14 }}
+                    >
+                      {isSigning ? 'SIGNING...' : t('\u270D 用钱包签名派生密钥', '\u270D SIGN WITH WALLET')}
+                    </button>
+                    {!signMessage && (
+                      <div className="mono" style={{ fontSize: 10, color: 'var(--danger)', marginTop: 6 }}>
+                        Wallet does not support signMessage (use Phantom or Solflare)
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div style={{ padding: '14px 16px', border: '1px solid var(--green)', background: 'rgba(31,111,62,.08)', marginBottom: 14 }}>
+                    <div className="mono" style={{ fontSize: 9, letterSpacing: '.2em', color: 'var(--green)', marginBottom: 6 }}>
+                      {'\u2713'} REGULATOR KEY DERIVED
+                    </div>
+                    <div className="mono" style={{ fontSize: 10, color: '#9a9aa3' }}>
+                      Pubkey: {walletPubkeyHex.slice(0, 16)}...{walletPubkeyHex.slice(-8)}
+                    </div>
+                  </div>
+                )}
 
                 {decryptError && (
                   <div className="mono" style={{ fontSize: 11, color: 'var(--danger)', padding: '10px 12px', border: '1px solid var(--danger)', background: 'rgba(181,61,32,.08)', marginBottom: 14, whiteSpace: 'pre-line' }}>
@@ -763,14 +726,14 @@ export default function RegulatorChamber({ lang, setLang }: RegulatorChamberProp
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button
                     onClick={unseal}
-                    disabled={!privateKeyA.trim() && !privateKeyB.trim()}
+                    disabled={!regulatorKey}
                     className="btn solid"
-                    style={{ borderColor: 'var(--gold)', background: 'var(--gold)', color: 'var(--d-bg)' }}
+                    style={{ borderColor: 'var(--gold)', background: regulatorKey ? 'var(--gold)' : 'var(--d-line-2)', color: 'var(--d-bg)' }}
                   >
-                    {t('🔓 解密余额', '🔓 UNSEAL BALANCES')}
+                    {t('\u{1F510} 解密余额', '\u{1F510} UNSEAL BALANCES')}
                   </button>
                   <button onClick={reset} className="btn" style={{ borderColor: '#f4f1ea', color: '#f4f1ea' }}>
-                    {'←'} {t('取消', 'CANCEL')}
+                    {'\u2190'} {t('取消', 'CANCEL')}
                   </button>
                 </div>
               </div>

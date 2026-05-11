@@ -33,6 +33,7 @@ import {
   elgamalEncrypt,
   serializeCiphertext,
   sendAndConfirmPolling,
+  unpackRegulatorPubkey,
 } from "@nexum/sdk";
 
 // ── Browser-compatible ZK proof helpers ──────────────────────────────
@@ -571,6 +572,39 @@ export function useSchemeB(
         ...Array.from(serializeCiphertext(audit_b_hi)),
       ];
 
+      // ── Regulator ciphertexts (chunks 4-5) ───────────────────────
+      let chunk4: number[] | null = null;
+      let chunk5: number[] | null = null;
+      try {
+        const [configPdaForReg] = findConfigPDA(program.programId);
+        const configInfo = await program.provider.connection.getAccountInfo(configPdaForReg);
+        if (configInfo && configInfo.data.length > 171) {
+          const regPubkeyBytes = configInfo.data.slice(107, 171); // 64 bytes at offset 107
+          const isZero = regPubkeyBytes.every((b: number) => b === 0);
+          if (!isZero) {
+            log("Encrypting amounts for regulator...");
+            const regPoint = unpackRegulatorPubkey(new Uint8Array(regPubkeyBytes));
+            const reg_ct_a_lo = elgamalEncrypt(BigInt(tLo), regPoint);
+            const reg_ct_a_hi = elgamalEncrypt(BigInt(tHi), regPoint);
+            const reg_ct_b_lo = elgamalEncrypt(BigInt(b_lo), regPoint);
+            const reg_ct_b_hi = elgamalEncrypt(BigInt(b_hi), regPoint);
+            chunk4 = [
+              ...Array.from(serializeCiphertext(reg_ct_a_lo)),
+              ...Array.from(serializeCiphertext(reg_ct_a_hi)),
+            ];
+            chunk5 = [
+              ...Array.from(serializeCiphertext(reg_ct_b_lo)),
+              ...Array.from(serializeCiphertext(reg_ct_b_hi)),
+            ];
+            log("✓ Regulator ciphertexts generated (chunks 4-5)");
+          } else {
+            log("No regulator registered — skipping regulator ciphertexts");
+          }
+        }
+      } catch (e: any) {
+        log(`Warning: regulator CT generation failed: ${e.message}`);
+      }
+
       // ── Phase 2: On-chain submission ──────────────────────────────
       setInitiatorState("SUBMITTING_EXECUTE");
 
@@ -598,16 +632,17 @@ export function useSchemeB(
       }
       log(`✓ ProofData ready — TX: ${sig3a}`);
 
-      const chunks = [chunk0, chunk1, chunk2, chunk3];
+      const chunks: number[][] = [chunk0, chunk1, chunk2, chunk3];
+      if (chunk4) chunks.push(chunk4);
+      if (chunk5) chunks.push(chunk5);
       const chunkSigs: string[] = [];
-      for (let i = 0; i < 4; i++) {
-        log(`Writing proof chunk ${i}/3 (${chunks[i].length} bytes)...`);
-        const chunkIdx = i;
+      for (let i = 0; i < chunks.length; i++) {
+        log(`Writing proof chunk ${i}/${chunks.length - 1} (${chunks[i].length} bytes)...`);
         const tx = await program.methods
           .writeProofData({
             nonce: new anchor.BN(slotNonce.toString()),
-            chunkIndex: chunkIdx,
-            data: Buffer.from(chunks[chunkIdx]),
+            chunkIndex: i,
+            data: Buffer.from(chunks[i]),
           })
           .accounts({
             proofData: proofDataPda,
@@ -616,7 +651,7 @@ export function useSchemeB(
           .transaction();
         const sig = await sendAndConfirmPolling(program.provider.connection, wallet, tx);
         chunkSigs.push(sig);
-        log(`✓ Chunk ${i}/3 written — TX: ${sig}`);
+        log(`✓ Chunk ${i}/${chunks.length - 1} written — TX: ${sig}`);
       }
 
       // Step 3c: Execute settlement (vault model — encrypted balance update only)
