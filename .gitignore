@@ -39,3 +39,32 @@ scripts/keys/
 *.zip
 circuits/build_private/
 circuits/build/verification_key.json.private
+
+# Design mockups (local only)
+design_front/
+
+# Root HTML prototypes (not the app)
+/index.html
+/example.html
+
+# One-off debug/inspect scripts (local only)
+scripts/_*
+scripts/cancel-*.sh
+scripts/cancel-*.js
+scripts/check-*.ts
+scripts/check-*.js
+scripts/compare-*.ts
+scripts/debug_*.ts
+scripts/decode-*.ts
+scripts/devnet-accept-execute.ts
+scripts/devnet-browser-*.ts
+scripts/devnet-cancel-*.sh
+scripts/devnet-setup-*.ts
+scripts/devnet-spl-*.ts
+scripts/inspect-*.ts
+scripts/proxy-*.js
+scripts/query-*.sh
+scripts/setup-*.sh
+scripts/show-ciphertext.ts
+scripts/test-*.js
+scripts/verify-*.ts
