@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="README_CN.md">中文版</a>
+  <a href="README_CN.md">中文版</a> &middot; <a href="https://www.youtube.com/watch?v=UNCH7Gyeazo">Demo Video</a>
 </p>
 
 ---
@@ -98,7 +98,7 @@ White-label SDK for exchanges and prime brokers to integrate private settlement 
 
 | | Nexum | Penumbra | Renegade | AirSwap RFQ |
 |---|---|---|---|---|
-| **Chain** | Solana (sub-second) | Cosmos (6s blocks) | Arbitrum (12s L1) | Ethereum (12s) |
+| **Chain** | Solana (sub-second) | Cosmos (6s blocks) | Arbitrum Stylus (~0.25s) | Ethereum (12s) |
 | **Privacy model** | ElGamal + ZK (on-chain) | Shielded pools (IBC) | MPC (off-chain) | None |
 | **Free option protection** | Symmetric dual-lock | Partial (IBC timeout) | MPC round-based | None |
 | **Settlement speed** | ~30s (3 TXs) | ~15s (IBC round) | ~45s (3 MPC rounds) | ~30s (2 TXs) |

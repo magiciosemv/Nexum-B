@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a>
+  <a href="README.md">English</a> &middot; <a href="https://www.youtube.com/watch?v=UNCH7Gyeazo">演示视频</a>
 </p>
 
 ---
@@ -98,7 +98,7 @@ Nexum 是一个**结算协议**，不是交易场所。双方链下达成条款�
 
 | | Nexum | Penumbra | Renegade | AirSwap RFQ |
 |---|---|---|---|---|
-| **链** | Solana（亚秒级） | Cosmos（6s 出块） | Arbitrum（12s L1） | Ethereum（12s） |
+| **链** | Solana（亚秒级） | Cosmos（6s 出块） | Arbitrum Stylus（~0.25s） | Ethereum（12s） |
 | **隐私模型** | ElGamal + ZK（链上） | 屏蔽池（IBC） | MPC（链下） | 无 |
 | **免费期权保护** | 对称双锁 | 部分（IBC 超时） | MPC 轮次 | 无 |
 | **结算速度** | ~30s（3 笔 TX） | ~15s（IBC 轮次） | ~45s（3 轮 MPC） | ~30s（2 笔 TX） |
