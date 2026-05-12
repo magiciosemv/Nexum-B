@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="README_CN.md">中文版</a> &middot; <a href="https://www.youtube.com/watch?v=UNCH7Gyeazo">Demo Video</a>
+  <a href="README_CN.md">中文版</a> &middot; <a href="https://www.youtube.com/watch?v=UNCH7Gyeazo">Core Feature Demo</a>
 </p>
 
 ---

@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> &middot; <a href="https://www.youtube.com/watch?v=UNCH7Gyeazo">演示视频</a>
+  <a href="README.md">English</a> &middot; <a href="https://www.youtube.com/watch?v=UNCH7Gyeazo">核心功能演示视频</a>
 </p>
 
 ---
