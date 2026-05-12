@@ -74,6 +74,9 @@ pub enum NexumError {
     #[msg("Invalid ZK verifier program ID")]
     InvalidZkVerifierProgram,
 
+    #[msg("Withdrawal amount exceeds encrypted balance")]
+    InsufficientBalance,
+
     // ── Regulator errors ─────────────────────────────────────────────
     #[msg("Unauthorized: only governance authority can register regulator key")]
     UnauthorizedRegulator,

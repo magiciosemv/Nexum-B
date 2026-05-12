@@ -2,7 +2,9 @@ use anchor_lang::prelude::*;
 use groth16_solana::groth16::Groth16Verifier;
 
 pub mod vk;
+pub mod vk_withdraw;
 use vk::{VERIFYING_KEY, NR_PUBINPUTS};
+use vk_withdraw::{WITHDRAW_VERIFYING_KEY, WITHDRAW_NR_PUBINPUTS};
 
 declare_id!("HBjtDNTL5cj6oc97Gno14x8GjL6LNsZ26iRK4v52KjDA");
 
@@ -13,7 +15,7 @@ declare_id!("HBjtDNTL5cj6oc97Gno14x8GjL6LNsZ26iRK4v52KjDA");
 ///   [1] commitment_hash_hi (128-bit, upper half of SHA-256 commitment hash)
 ///
 /// All balance/amount values are PRIVATE — no amounts leak on-chain.
-/// SHA-256 of the 120-byte commitment preimage is verified inside the circuit.
+/// SHA-256 of the 128-byte commitment preimage is verified inside the circuit.
 ///
 /// Proof format (256 bytes, big-endian from snarkjs):
 ///   pi_a (G1): 64 bytes, pi_b (G2): 128 bytes, pi_c (G1): 64 bytes
@@ -67,6 +69,48 @@ pub mod zk_verifier {
             .map_err(|_| ZkError::ProofVerificationFailed)?;
 
         msg!("verify_proof: Groth16 pairing check PASSED");
+        Ok(())
+    }
+
+    pub fn verify_withdraw_proof(
+        _ctx: Context<VerifyProof>,
+        proof: [u8; 256],
+        old_ct_hash_lo: u128,
+        old_ct_hash_hi: u128,
+    ) -> Result<()> {
+        // ── Fast reject: trivial proof ──────────────────────────────────
+        let non_trivial = proof.iter().any(|&b| b != 0);
+        require!(non_trivial, ZkError::TrivialProof);
+
+        // ── Build public inputs (2 x 32 bytes, big-endian) ─────────────
+        let public_inputs: [[u8; 32]; WITHDRAW_NR_PUBINPUTS] = [
+            u128_to_be32(old_ct_hash_lo),  // [0] lower 128 bits
+            u128_to_be32(old_ct_hash_hi),  // [1] upper 128 bits
+        ];
+
+        // ── Negate proof_a ─────────────────────────────────────────────
+        let mut proof_a = [0u8; 64];
+        proof_a.copy_from_slice(&proof[0..64]);
+        negate_g1_y_be(&mut proof_a);
+
+        let proof_b: &[u8; 128] = (&proof[64..192]).try_into().unwrap();
+        let proof_c: &[u8; 64] = (&proof[192..256]).try_into().unwrap();
+
+        // ── Groth16 verification via BN254 pairing check ───────────────
+        let mut verifier = Groth16Verifier::new(
+            &proof_a,
+            proof_b,
+            proof_c,
+            &public_inputs,
+            &WITHDRAW_VERIFYING_KEY,
+        )
+        .map_err(|_| ZkError::ProofVerificationFailed)?;
+
+        verifier
+            .verify()
+            .map_err(|_| ZkError::ProofVerificationFailed)?;
+
+        msg!("verify_withdraw_proof: Groth16 pairing check PASSED");
         Ok(())
     }
 }

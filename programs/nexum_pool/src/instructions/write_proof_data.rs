@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use crate::state::ProofData;
+use crate::state::{ProofData, CommitSlot};
 use crate::errors::NexumError;
 
 /// Write a chunk of proof/ciphertext data to a ProofData account.
@@ -40,12 +40,19 @@ pub struct WriteProofData<'info> {
     )]
     pub proof_data: Box<Account<'info, ProofData>>,
 
-    /// Only the authority who created the ProofData can write to it.
+    /// CommitSlot — links this ProofData to a specific settlement.
+    /// Nonce constraint ensures it belongs to the same settlement.
+    /// Discriminator check (Account<CommitSlot>) ensures it was created by this program.
     #[account(
-        signer,
-        constraint = proof_data.nonce == params.nonce
+        constraint = commit_slot.nonce == params.nonce
             @ NexumError::InvalidNonce,
+        constraint = authority.key() == commit_slot.initiator
+            || authority.key() == commit_slot.counterparty
+            @ NexumError::Unauthorized,
     )]
+    pub commit_slot: Box<Account<'info, CommitSlot>>,
+
+    /// Only a party to the settlement (initiator or counterparty) can write proof data.
     pub authority: Signer<'info>,
 }
 

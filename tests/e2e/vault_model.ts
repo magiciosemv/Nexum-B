@@ -386,14 +386,14 @@ describe("Vault Model — Settlement with Shared Treasury Vaults", () => {
     console.log("  Proof B generated:", proofB.proof_a.length, "bytes");
 
     // ElGamal encrypt
-    const ct_a_lo = elgamalEncrypt(0n, keypairA.publicKey);
-    const ct_a_hi = elgamalEncrypt(0n, keypairA.publicKey);
-    const audit_a_lo = elgamalEncrypt(BigInt(a_lo), keypairA.publicKey);
-    const audit_a_hi = elgamalEncrypt(BigInt(a_hi), keypairA.publicKey);
-    const ct_b_lo = elgamalEncrypt(BigInt(b_lo), keypairB.publicKey);
-    const ct_b_hi = elgamalEncrypt(BigInt(b_hi), keypairB.publicKey);
-    const audit_b_lo = elgamalEncrypt(0n, keypairB.publicKey);
-    const audit_b_hi = elgamalEncrypt(0n, keypairB.publicKey);
+    const { ciphertext: ct_a_lo, randomness: r_a_lo } = elgamalEncrypt(0n, keypairA.publicKey);
+    const { ciphertext: ct_a_hi, randomness: r_a_hi } = elgamalEncrypt(0n, keypairA.publicKey);
+    const { ciphertext: audit_a_lo } = elgamalEncrypt(BigInt(a_lo), keypairA.publicKey);
+    const { ciphertext: audit_a_hi } = elgamalEncrypt(BigInt(a_hi), keypairA.publicKey);
+    const { ciphertext: ct_b_lo, randomness: r_b_lo } = elgamalEncrypt(BigInt(b_lo), keypairB.publicKey);
+    const { ciphertext: ct_b_hi, randomness: r_b_hi } = elgamalEncrypt(BigInt(b_hi), keypairB.publicKey);
+    const { ciphertext: audit_b_lo } = elgamalEncrypt(0n, keypairB.publicKey);
+    const { ciphertext: audit_b_hi } = elgamalEncrypt(0n, keypairB.publicKey);
     console.log("  ElGamal ciphertexts generated");
 
     // Build proof data chunks
@@ -434,6 +434,7 @@ describe("Vault Model — Settlement with Shared Treasury Vaults", () => {
         })
         .accounts({
           proofData: proofDataPda,
+          commitSlot: commitSlotPda,
           authority: provider.wallet.publicKey,
         })
         .rpc();
@@ -444,12 +445,23 @@ describe("Vault Model — Settlement with Shared Treasury Vaults", () => {
     const settlementNonce = BigInt(Date.now());
     const [settlementPda] = findSettlementPDA(commitSlotPda, settlementNonce, program.programId);
 
+    // Helper: convert bigint randomness to 31-byte LE array
+    const randToBytes = (r: bigint): number[] => {
+      const bytes: number[] = [];
+      for (let i = 0; i < 31; i++) { bytes.push(Number(r & 0xFFn)); r >>= 8n; }
+      return bytes;
+    };
+
     await program.methods
       .executeSettleB({
         nonce: new anchor.BN(nonce.toString()),
         commitmentHashLo: new anchor.BN(proofA.public_signals[0]),
         commitmentHashHi: new anchor.BN(proofA.public_signals[1]),
         settlementNonce: new anchor.BN(settlementNonce.toString()),
+        newRALo: randToBytes(r_a_lo),
+        newRAHi: randToBytes(r_a_hi),
+        newRBLo: randToBytes(r_b_lo),
+        newRBHi: randToBytes(r_b_hi),
       })
       .preInstructions([
         ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),

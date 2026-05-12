@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
-use crate::state::ProtocolConfig;
+use crate::state::{ProtocolConfig, UserLedger};
 use crate::errors::NexumError;
 
 /// Deposit SPL tokens into the shared Treasury Vault PDA.
@@ -36,10 +36,25 @@ pub struct Deposit<'info> {
     )]
     pub config: Box<Account<'info, ProtocolConfig>>,
 
+    /// User's encrypted-balance ledger.
+    #[account(
+        mut,
+        seeds = [b"ledger", owner.key().as_ref(), mint.key().as_ref()],
+        bump = ledger.bump,
+    )]
+    pub ledger: Box<Account<'info, UserLedger>>,
+
     pub token_program: Program<'info, Token>,
 }
 
-pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+pub fn handler(
+    ctx: Context<Deposit>,
+    amount: u64,
+    initial_ct_lo: [u8; 128],
+    initial_ct_hi: [u8; 128],
+    initial_r_lo: [u8; 31],
+    initial_r_hi: [u8; 31],
+) -> Result<()> {
     require!(amount > 0, NexumError::InvalidAmount);
 
     let cpi_ctx = CpiContext::new(
@@ -51,6 +66,16 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
         },
     );
     token::transfer(cpi_ctx, amount)?;
+
+    // On first deposit, initialize encrypted balance with user-provided values
+    let ledger = &mut ctx.accounts.ledger;
+    if ledger.balance_ct_lo == [0u8; 128] {
+        ledger.balance_ct_lo = initial_ct_lo;
+        ledger.balance_ct_hi = initial_ct_hi;
+        ledger.encryption_r_lo = initial_r_lo;
+        ledger.encryption_r_hi = initial_r_hi;
+        ledger.version = ledger.version.checked_add(1).unwrap();
+    }
 
     msg!(
         "deposit: {} deposited {} of mint {} into vault",

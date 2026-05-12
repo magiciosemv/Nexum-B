@@ -64,6 +64,10 @@ pub struct UserLedger {
     // ── Regulator ciphertexts (256 bytes) ───────────────────────────
     pub regulator_ct_lo: [u8; 128],   // Regulator-encrypted balance low 32 bits
     pub regulator_ct_hi: [u8; 128],   // Regulator-encrypted balance high 32 bits
+
+    // ── Encryption randomness (62 bytes) ──────────────────────────────
+    pub encryption_r_lo: [u8; 31],   // ElGamal randomness for balance_ct_lo
+    pub encryption_r_hi: [u8; 31],   // ElGamal randomness for balance_ct_hi
 }
 
 impl Default for UserLedger {
@@ -86,6 +90,8 @@ impl Default for UserLedger {
             pending_nonce: 0,
             regulator_ct_lo: [0u8; 128],
             regulator_ct_hi: [0u8; 128],
+            encryption_r_lo: [0u8; 31],
+            encryption_r_hi: [0u8; 31],
         }
     }
 }
@@ -130,7 +136,9 @@ impl UserLedger {
         + 32                  // pending_asset_b_mint
         + 8                   // pending_nonce
         + 128                 // regulator_ct_lo
-        + 128;                // regulator_ct_hi
+        + 128                 // regulator_ct_hi
+        + 31                  // encryption_r_lo
+        + 31;                 // encryption_r_hi
 
     /// Clear all pending fields. MUST be called in execute_settle_b, cancel_initiate,
     /// and cancel_mutual after state transitions.
@@ -156,9 +164,9 @@ mod tests {
     #[test]
     fn test_ledger_len_constant() {
         // Verify LEN matches manual calculation (includes regulator ciphertexts)
-        let expected = 8 + 32 + 32 + 128 * 4 + 8 + 1 + 32 + 1 + 32 + 8 + 32 + 32 + 8 + 128 * 2;
+        let expected = 8 + 32 + 32 + 128 * 4 + 8 + 1 + 32 + 1 + 32 + 8 + 32 + 32 + 8 + 128 * 2 + 31 + 31;
         assert_eq!(UserLedger::LEN, expected, "UserLedger::LEN mismatch");
-        assert_eq!(UserLedger::LEN, 994, "UserLedger must be exactly 994 bytes");
+        assert_eq!(UserLedger::LEN, 994 + 62, "UserLedger must be exactly 1056 bytes");
     }
 
     #[test]

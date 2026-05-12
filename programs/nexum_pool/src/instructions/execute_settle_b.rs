@@ -15,6 +15,10 @@ pub struct SettleAtomicParams {
     pub commitment_hash_lo: u128,
     pub commitment_hash_hi: u128,
     pub settlement_nonce: u64,
+    pub new_r_a_lo: [u8; 31],
+    pub new_r_a_hi: [u8; 31],
+    pub new_r_b_lo: [u8; 31],
+    pub new_r_b_hi: [u8; 31],
 }
 
 #[derive(Accounts)]
@@ -172,6 +176,8 @@ pub fn handler(ctx: Context<ExecuteSettleB>, p: SettleAtomicParams) -> Result<()
     la.audit_ct_hi = proofs.audit_ct_a_hi;
     la.regulator_ct_lo = proofs.regulator_ct_a_lo;
     la.regulator_ct_hi = proofs.regulator_ct_a_hi;
+    la.encryption_r_lo = p.new_r_a_lo;
+    la.encryption_r_hi = p.new_r_a_hi;
     la.version = la.version.checked_add(1).unwrap();
     la.status = LedgerStatus::Active;
     la.last_settlement_id = ctx.accounts.settlement_record.key().to_bytes();
@@ -184,6 +190,8 @@ pub fn handler(ctx: Context<ExecuteSettleB>, p: SettleAtomicParams) -> Result<()
     lb.audit_ct_hi = proofs.audit_ct_b_hi;
     lb.regulator_ct_lo = proofs.regulator_ct_b_lo;
     lb.regulator_ct_hi = proofs.regulator_ct_b_hi;
+    lb.encryption_r_lo = p.new_r_b_lo;
+    lb.encryption_r_hi = p.new_r_b_hi;
     lb.version = lb.version.checked_add(1).unwrap();
     lb.status = LedgerStatus::Active;
     lb.last_settlement_id = ctx.accounts.settlement_record.key().to_bytes();

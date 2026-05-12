@@ -8,6 +8,56 @@
  *   npx ts-node scripts/devnet-accept.ts CjnKTv7fxuEDU91n1nkcLe536kfbvV7o4cA9mJAA68Ue 1778439908079
  */
 
+// ── WSL2 fix: force IPv4 for native fetch (IPv6 unreachable in WSL2) ──
+const _dns = require("dns");
+_dns.setDefaultResultOrder("ipv4first");
+// Override native fetch to use node's https module (respects ipv4first)
+const _https = require("https");
+const _http = require("http");
+(globalThis as any).fetch = function(url: string, opts: any) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const mod = u.protocol === "https:" ? _https : _http;
+    const req = mod.request({
+      hostname: u.hostname,
+      port: u.port || (u.protocol === "https:" ? 443 : 80),
+      path: u.pathname + u.search,
+      method: opts?.method || "GET",
+      headers: opts?.headers || {},
+    }, (res: any) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () => {
+        resolve({
+          ok: res.statusCode >= 200 && res.statusCode < 300,
+          status: res.statusCode,
+          json: () => Promise.resolve(JSON.parse(Buffer.concat(chunks).toString())),
+          text: () => Promise.resolve(Buffer.concat(chunks).toString()),
+        } as any);
+      });
+    });
+    req.on("error", reject);
+    if (opts?.body) req.write(opts.body);
+    req.end();
+  });
+};
+
+// ── Load .env ───────────────────────────────────────────────────────
+const envPath = require("path").join(__dirname, "..", ".env");
+if (require("fs").existsSync(envPath)) {
+  require("fs").readFileSync(envPath, "utf-8")
+    .split("\n")
+    .filter((l: string) => l && !l.startsWith("#"))
+    .forEach((l: string) => {
+      const idx = l.indexOf("=");
+      if (idx > 0) {
+        const k = l.slice(0, idx).trim();
+        const v = l.slice(idx + 1).trim();
+        if (k && v) process.env[k] = v;
+      }
+    });
+}
+
 import { Connection, PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
@@ -16,8 +66,8 @@ import path from "path";
 
 const RPC = "https://devnet.helius-rpc.com/?api-key=506b80b3-cae1-4a10-bd37-b048aa5dd8a5";
 const PROGRAM_ID = new PublicKey("6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r");
-const MINT_A = new PublicKey("krzeZAdbCYEaAYPxKznJ4VVcqqjH8tow67CwmWU9PQf");
-const MINT_B = new PublicKey("DkMziJhKEnedc8KBXgVnGkdShTJSHn9fk8NTMoFm33fC");
+const MINT_A = new PublicKey("DkMziJhKEnedc8KBXgVnGkdShTJSHn9fk8NTMoFm33fC");
+const MINT_B = new PublicKey("krzeZAdbCYEaAYPxKznJ4VVcqqjH8tow67CwmWU9PQf");
 
 function findLedgerPDA(owner: PublicKey, mint: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
@@ -77,7 +127,7 @@ async function main() {
   console.log("CommitSlot:", commitSlot.toBase58());
   console.log("Nonce:", nonce.toString());
 
-  // ── Step 0: Ensure counterparty's Ledger B exists ────────────────
+  // ── Step 0: Ensure counterparty's Ledger B exists and is correct size ──
   const ledgerBInfo = await connection.getAccountInfo(ledgerB);
   if (!ledgerBInfo) {
     console.log("\nLedger B not found. Creating for counterparty...");
@@ -100,6 +150,25 @@ async function main() {
     }
   } else {
     console.log("Ledger B exists (" + ledgerBInfo.data.length + " bytes)");
+    // Migrate if too small (UserLedger needs 1056 bytes)
+    if (ledgerBInfo.data.length < 1056) {
+      console.log("Ledger B too small, migrating...");
+      try {
+        const migrateSig = await program.methods
+          .migrateLedger()
+          .accounts({
+            ledger: ledgerB,
+            signer: cpKeypair.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([cpKeypair])
+          .rpc();
+        console.log("migrateLedger TX:", migrateSig);
+      } catch (e: any) {
+        console.log("migrateLedger error:", e.message?.slice(0, 300));
+        return;
+      }
+    }
   }
 
   // ── Step 1: Accept commit ────────────────────────────────────────

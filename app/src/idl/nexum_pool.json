@@ -622,6 +622,36 @@
           }
         },
         {
+          "name": "ledger",
+          "docs": [
+            "User's encrypted-balance ledger."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  100,
+                  103,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
           "name": "token_program",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
@@ -630,6 +660,42 @@
         {
           "name": "amount",
           "type": "u64"
+        },
+        {
+          "name": "initial_ct_lo",
+          "type": {
+            "array": [
+              "u8",
+              128
+            ]
+          }
+        },
+        {
+          "name": "initial_ct_hi",
+          "type": {
+            "array": [
+              "u8",
+              128
+            ]
+          }
+        },
+        {
+          "name": "initial_r_lo",
+          "type": {
+            "array": [
+              "u8",
+              31
+            ]
+          }
+        },
+        {
+          "name": "initial_r_hi",
+          "type": {
+            "array": [
+              "u8",
+              31
+            ]
+          }
         }
       ]
     },
@@ -1290,6 +1356,36 @@
           ]
         },
         {
+          "name": "ledger",
+          "docs": [
+            "User's encrypted-balance ledger. Required to ensure the withdrawer",
+            "has an active ledger for this mint and is not locked in a settlement."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  100,
+                  103,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
           "name": "config",
           "pda": {
             "seeds": [
@@ -1316,12 +1412,63 @@
         {
           "name": "token_program",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "zk_verifier_program",
+          "docs": [
+            "ZK verifier program."
+          ]
         }
       ],
       "args": [
         {
           "name": "amount",
           "type": "u64"
+        },
+        {
+          "name": "proof",
+          "type": {
+            "array": [
+              "u8",
+              256
+            ]
+          }
+        },
+        {
+          "name": "new_ct_lo",
+          "type": {
+            "array": [
+              "u8",
+              128
+            ]
+          }
+        },
+        {
+          "name": "new_ct_hi",
+          "type": {
+            "array": [
+              "u8",
+              128
+            ]
+          }
+        },
+        {
+          "name": "new_r_lo",
+          "type": {
+            "array": [
+              "u8",
+              31
+            ]
+          }
+        },
+        {
+          "name": "new_r_hi",
+          "type": {
+            "array": [
+              "u8",
+              31
+            ]
+          }
         }
       ]
     },
@@ -1362,9 +1509,17 @@
           }
         },
         {
+          "name": "commit_slot",
+          "docs": [
+            "CommitSlot — links this ProofData to a specific settlement.",
+            "Nonce constraint ensures it belongs to the same settlement.",
+            "Discriminator check (Account<CommitSlot>) ensures it was created by this program."
+          ]
+        },
+        {
           "name": "authority",
           "docs": [
-            "Only the authority who created the ProofData can write to it."
+            "Only a party to the settlement (initiator or counterparty) can write proof data."
           ],
           "signer": true
         }
@@ -1658,6 +1813,11 @@
     },
     {
       "code": 6028,
+      "name": "InsufficientBalance",
+      "msg": "Withdrawal amount exceeds encrypted balance"
+    },
+    {
+      "code": 6029,
       "name": "UnauthorizedRegulator",
       "msg": "Unauthorized: only governance authority can register regulator key"
     }
@@ -2199,6 +2359,42 @@
           {
             "name": "settlement_nonce",
             "type": "u64"
+          },
+          {
+            "name": "new_r_a_lo",
+            "type": {
+              "array": [
+                "u8",
+                31
+              ]
+            }
+          },
+          {
+            "name": "new_r_a_hi",
+            "type": {
+              "array": [
+                "u8",
+                31
+              ]
+            }
+          },
+          {
+            "name": "new_r_b_lo",
+            "type": {
+              "array": [
+                "u8",
+                31
+              ]
+            }
+          },
+          {
+            "name": "new_r_b_hi",
+            "type": {
+              "array": [
+                "u8",
+                31
+              ]
+            }
           }
         ]
       }
@@ -2444,6 +2640,24 @@
               "array": [
                 "u8",
                 128
+              ]
+            }
+          },
+          {
+            "name": "encryption_r_lo",
+            "type": {
+              "array": [
+                "u8",
+                31
+              ]
+            }
+          },
+          {
+            "name": "encryption_r_hi",
+            "type": {
+              "array": [
+                "u8",
+                31
               ]
             }
           }

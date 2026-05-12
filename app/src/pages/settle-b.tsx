@@ -149,7 +149,7 @@ export default function SettleBPage({ onBack }: Props) {
             </div>
             <div className="p-5 pt-0 flex space-x-3">
               <button
-                onClick={() => { if (counterparty && assetBMint && amount) schemeB.initiate(counterparty, assetBMint, BigInt(amount), assetAMint || undefined); }}
+                onClick={() => { if (counterparty && assetBMint && amount) schemeB.initiate(counterparty, assetBMint, BigInt(amount!), assetAMint || undefined); }}
                 disabled={formOff || !counterparty || !assetBMint || !amount}
                 className={`flex-grow py-3 uppercase tracking-widest text-xs font-bold transition-all border rounded-lg flex items-center justify-center space-x-2 cursor-pointer
                   ${!formOff && counterparty && assetBMint && amount ? "bg-amber-400/15 text-amber-400 border-amber-400/40 hover:bg-amber-400/25" : "bg-slate-800/50 text-slate-600 border-slate-700/40 cursor-not-allowed"}`}

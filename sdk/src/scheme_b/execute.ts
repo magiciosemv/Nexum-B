@@ -37,6 +37,14 @@ export interface ExecuteParams {
   commit_slot_id: PublicKey;
   proof_a: ZKProofData;
   proof_b: ZKProofData;
+  /** Party A's new encryption randomness for lo limb (31 bytes) */
+  new_r_a_lo: Uint8Array;
+  /** Party A's new encryption randomness for hi limb (31 bytes) */
+  new_r_a_hi: Uint8Array;
+  /** Party B's new encryption randomness for lo limb (31 bytes) */
+  new_r_b_lo: Uint8Array;
+  /** Party B's new encryption randomness for hi limb (31 bytes) */
+  new_r_b_hi: Uint8Array;
 }
 
 export interface ExecuteResult {
@@ -104,10 +112,10 @@ export interface BuildProofDataParams {
 export function buildProofData(params: BuildProofDataParams): ZKProofData {
   const { proof, encryptPublicKey, old_lo, old_hi, new_lo, new_hi } = params;
 
-  const ct_lo = elgamalEncrypt(BigInt(new_lo), encryptPublicKey);
-  const ct_hi = elgamalEncrypt(BigInt(new_hi), encryptPublicKey);
-  const audit_lo = elgamalEncrypt(BigInt(old_lo), encryptPublicKey);
-  const audit_hi = elgamalEncrypt(BigInt(old_hi), encryptPublicKey);
+  const { ciphertext: ct_lo } = elgamalEncrypt(BigInt(new_lo), encryptPublicKey);
+  const { ciphertext: ct_hi } = elgamalEncrypt(BigInt(new_hi), encryptPublicKey);
+  const { ciphertext: audit_lo } = elgamalEncrypt(BigInt(old_lo), encryptPublicKey);
+  const { ciphertext: audit_hi } = elgamalEncrypt(BigInt(old_hi), encryptPublicKey);
 
   // Extract commitment hash from public signals
   const hashLo = BigInt(proof.public_signals[0]);
@@ -183,6 +191,7 @@ export async function executeSettle(
       })
       .accounts({
         proofData: proofDataPda,
+        commitSlot: params.commit_slot_id,
         authority: wallet.publicKey,
       })
       .transaction();
@@ -201,6 +210,10 @@ export async function executeSettle(
       commitmentHashLo: new anchor.BN(params.proof_a.commitment_hash_lo.toString()),
       commitmentHashHi: new anchor.BN(params.proof_a.commitment_hash_hi.toString()),
       settlementNonce: new anchor.BN(settlementNonce.toString()),
+      newRALo: Array.from(params.new_r_a_lo),
+      newRAHi: Array.from(params.new_r_a_hi),
+      newRBLo: Array.from(params.new_r_b_lo),
+      newRBHi: Array.from(params.new_r_b_hi),
     })
     .preInstructions([
       ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),

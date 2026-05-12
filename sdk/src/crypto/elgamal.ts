@@ -71,7 +71,7 @@ export function derivePublicKey(privateKey: bigint): Point {
  * @param publicKey - Recipient's public key
  * @returns ElGamal ciphertext (2 points = 128 bytes serialized)
  */
-export function encrypt(value: bigint, publicKey: Point): ElGamalCiphertext {
+export function encrypt(value: bigint, publicKey: Point): { ciphertext: ElGamalCiphertext; randomness: bigint } {
   // Random ephemeral key
   const r = randomFieldElement();
 
@@ -87,7 +87,7 @@ export function encrypt(value: bigint, publicKey: Point): ElGamalCiphertext {
   // C2 = r * P + m * G
   const c2 = addPoint(sharedSecret, messagePoint);
 
-  return { c1, c2 };
+  return { ciphertext: { c1, c2 }, randomness: r };
 }
 
 // ── Decryption ────────────────────────────────────────────────────────

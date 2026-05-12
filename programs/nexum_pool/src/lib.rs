@@ -70,12 +70,27 @@ pub mod nexum_pool {
         instructions::create_vault::handler(ctx)
     }
 
-    pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
-        instructions::deposit::handler(ctx, amount)
+    pub fn deposit(
+        ctx: Context<Deposit>,
+        amount: u64,
+        initial_ct_lo: [u8; 128],
+        initial_ct_hi: [u8; 128],
+        initial_r_lo: [u8; 31],
+        initial_r_hi: [u8; 31],
+    ) -> Result<()> {
+        instructions::deposit::handler(ctx, amount, initial_ct_lo, initial_ct_hi, initial_r_lo, initial_r_hi)
     }
 
-    pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
-        instructions::withdraw::handler(ctx, amount)
+    pub fn withdraw(
+        ctx: Context<Withdraw>,
+        amount: u64,
+        proof: [u8; 256],
+        new_ct_lo: [u8; 128],
+        new_ct_hi: [u8; 128],
+        new_r_lo: [u8; 31],
+        new_r_hi: [u8; 31],
+    ) -> Result<()> {
+        instructions::withdraw::handler(ctx, amount, proof, new_ct_lo, new_ct_hi, new_r_lo, new_r_hi)
     }
 
     pub fn register_regulator(

@@ -30,8 +30,11 @@ import { withdraw } from "@nexum/sdk";
 import { cancelInitiate as sdkCancelInitiate, cancelMutual as sdkCancelMutual } from "@nexum/sdk";
 import {
   generateKeypair,
+  derivePublicKey,
   elgamalEncrypt,
   serializeCiphertext,
+  deserializeCiphertext,
+  elgamalDecryptU32,
   sendAndConfirmPolling,
   unpackRegulatorPubkey,
 } from "@nexum/sdk";
@@ -70,6 +73,16 @@ function serializeProofBrowser(
 function toBits64(val: bigint | number): string[] {
   const v = BigInt(val);
   return Array.from({ length: 64 }, (_, i) => String(Number((v >> BigInt(i)) & 1n)));
+}
+
+/** Convert a bigint randomness to a 31-byte array (little-endian) for on-chain use. */
+function randomnessToBytes(r: bigint): number[] {
+  const bytes: number[] = [];
+  for (let i = 0; i < 31; i++) {
+    bytes.push(Number(r & 0xFFn));
+    r >>= 8n;
+  }
+  return bytes;
 }
 
 async function browserGenerateProof(inputs: {
@@ -128,6 +141,120 @@ async function browserGenerateProof(inputs: {
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(circuitInputs, wasmUrl, zkeyUrl);
   const proofBytes = serializeProofBrowser(proof.pi_a, proof.pi_b, proof.pi_c);
   return { proofBytes, publicSignals: publicSignals.map((s: any) => String(s)) };
+}
+
+// ── Withdraw proof generation ─────────────────────────────────────────
+
+interface WithdrawProofResult {
+  proofBytes: number[];
+  newCtLo: number[];
+  newCtHi: number[];
+  newRLo: number[];
+  newRHi: number[];
+}
+
+/**
+ * Generate a ZK proof for balance sufficiency during withdrawal.
+ *
+ * Flow:
+ * 1. Fetch UserLedger from chain → get ciphertext + randomness
+ * 2. Decrypt balance via ElGamal BSGS (private key from sessionStorage)
+ * 3. Compute new balance = old_balance - amount
+ * 4. Generate ZK proof that old_balance = new_balance + amount
+ * 5. Encrypt new balance with fresh randomness
+ *
+ * The circuit hashes the full 128-byte ciphertexts inside the circuit (SHA-256),
+ * matching the on-chain contract which computes SHA256(balance_ct_lo/hi).
+ */
+async function browserGenerateWithdrawProof(
+  program: anchor.Program,
+  owner: PublicKey,
+  mint: PublicKey,
+  amount: bigint,
+): Promise<WithdrawProofResult> {
+  const WASM_URL = "/circuits/withdraw_balance_check.wasm";
+  const ZKEY_URL = "/circuits/withdraw_balance_check_final.zkey";
+
+  // ── Step 1: Fetch ledger from chain ───────────────────────────────
+  const [ledgerPda] = findLedgerPDA(owner, mint, program.programId);
+  const ledgerInfo = await program.provider.connection.getAccountInfo(ledgerPda);
+  if (!ledgerInfo) throw new Error("Ledger not found — deposit first");
+
+  // Parse raw account data (skip 8-byte Anchor discriminator)
+  const data = ledgerInfo.data;
+  const CT_LO_OFFSET = 72;   // 8 (disc) + 32 (owner) + 32 (mint)
+  const CT_HI_OFFSET = 200;  // CT_LO_OFFSET + 128
+  const R_LO_OFFSET = 970;   // after regulator_ct_hi (see user_ledger.rs layout)
+  const R_HI_OFFSET = 1001;  // R_LO_OFFSET + 31
+
+  const ctLoBytes = data.slice(CT_LO_OFFSET, CT_LO_OFFSET + 128);
+  const ctHiBytes = data.slice(CT_HI_OFFSET, CT_HI_OFFSET + 128);
+  const rLoBytes = data.slice(R_LO_OFFSET, R_LO_OFFSET + 31);
+  const rHiBytes = data.slice(R_HI_OFFSET, R_HI_OFFSET + 31);
+
+  // ── Step 2: Decrypt balance via ElGamal ───────────────────────────
+  const keysRaw = sessionStorage.getItem('nexum_elgamal_keys');
+  if (!keysRaw) throw new Error("No ElGamal keys in session — settle first to generate keys");
+  const keys = JSON.parse(keysRaw);
+  const privateKey = BigInt(keys.keyA);
+
+  const ctLo = deserializeCiphertext(new Uint8Array(ctLoBytes));
+  const ctHi = deserializeCiphertext(new Uint8Array(ctHiBytes));
+  const oldBalanceLo = elgamalDecryptU32(ctLo, privateKey);
+  const oldBalanceHi = elgamalDecryptU32(ctHi, privateKey);
+
+  // ── Step 3: Compute new balance ───────────────────────────────────
+  const oldBalance = BigInt(oldBalanceLo) + (BigInt(oldBalanceHi) << 32n);
+  if (oldBalance < amount) throw new Error(`Insufficient balance: have ${oldBalance}, want ${amount}`);
+  const newBalance = oldBalance - amount;
+  const newBalanceLo = Number(newBalance & 0xFFFFFFFFn);
+  const newBalanceHi = Number(newBalance >> 32n);
+  const amountLo = Number(amount & 0xFFFFFFFFn);
+  const amountHi = Number(amount >> 32n);
+
+  // ── Step 4: Compute SHA-256 of old ciphertexts (for public inputs) ─
+  const hashLoBuf = await crypto.subtle.digest("SHA-256", ctLoBytes);
+  const hashHiBuf = await crypto.subtle.digest("SHA-256", ctHiBytes);
+  const hashLoArr = new Uint8Array(hashLoBuf);
+  const hashHiArr = new Uint8Array(hashHiBuf);
+  // Upper 128 bits = first 16 bytes of SHA-256 (matches contract: u128::from_be_bytes(hash[0..16]))
+  const hashLo = BigInt("0x" + Array.from(hashLoArr.subarray(0, 16)).map(b => b.toString(16).padStart(2, "0")).join(""));
+  const hashHi = BigInt("0x" + Array.from(hashHiArr.subarray(0, 16)).map(b => b.toString(16).padStart(2, "0")).join(""));
+
+  // ── Step 5: Build circuit inputs ──────────────────────────────────
+  // Circuit expects byte values as strings, array indices as "name[i]"
+  const circuitInputs: Record<string, string> = {};
+  for (let i = 0; i < 128; i++) {
+    circuitInputs[`old_ct_lo_bytes[${i}]`] = String(ctLoBytes[i]);
+    circuitInputs[`old_ct_hi_bytes[${i}]`] = String(ctHiBytes[i]);
+  }
+  circuitInputs["old_balance_lo"] = String(oldBalanceLo);
+  circuitInputs["old_balance_hi"] = String(oldBalanceHi);
+  circuitInputs["new_balance_lo"] = String(newBalanceLo);
+  circuitInputs["new_balance_hi"] = String(newBalanceHi);
+  circuitInputs["amount_lo"] = String(amountLo);
+  circuitInputs["amount_hi"] = String(amountHi);
+  circuitInputs["old_ct_hash_lo"] = hashLo.toString();
+  circuitInputs["old_ct_hash_hi"] = hashHi.toString();
+
+  // ── Step 6: Generate ZK proof ─────────────────────────────────────
+  const snarkjs = await import("snarkjs");
+  const { proof } = await snarkjs.groth16.fullProve(circuitInputs, WASM_URL, ZKEY_URL);
+  const proofBytes = serializeProofBrowser(proof.pi_a, proof.pi_b, proof.pi_c);
+
+  // ── Step 7: Encrypt new balance with fresh randomness ─────────────
+  // Derive the SAME public key from the stored private key (must match original encryption)
+  const pubKey = derivePublicKey(privateKey);
+  const { ciphertext: newCtLoObj, randomness: newRLo } = elgamalEncrypt(BigInt(newBalanceLo), pubKey);
+  const { ciphertext: newCtHiObj, randomness: newRHi } = elgamalEncrypt(BigInt(newBalanceHi), pubKey);
+
+  return {
+    proofBytes,
+    newCtLo: Array.from(serializeCiphertext(newCtLoObj)),
+    newCtHi: Array.from(serializeCiphertext(newCtHiObj)),
+    newRLo: randomnessToBytes(newRLo),
+    newRHi: randomnessToBytes(newRHi),
+  };
 }
 
 // ── State Machine ────────────────────────────────────────────────────
@@ -500,11 +627,26 @@ export function useSchemeB(
       };
 
       log("Generating ElGamal encryption keys...");
-      const keypairA = generateKeypair();
+      // Reuse deposit keypair if available (so withdraw can decrypt later)
+      const existingKeysRaw = sessionStorage.getItem('nexum_elgamal_keys');
+      let keypairA;
+      if (existingKeysRaw) {
+        try {
+          const existingKeys = JSON.parse(existingKeysRaw);
+          if (existingKeys.keyA) {
+            const sk = BigInt(existingKeys.keyA);
+            keypairA = { privateKey: sk, publicKey: derivePublicKey(sk) };
+            log("✓ Reusing existing ElGamal keypair A (from deposit)");
+          }
+        } catch { /* fall through */ }
+      }
+      if (!keypairA) {
+        keypairA = generateKeypair();
+        log("✓ New ElGamal keypair A generated");
+      }
       const keypairB = generateKeypair();
-      log("✓ ElGamal keypairs generated");
 
-      // Save private keys to localStorage so regulator can decrypt later
+      // Save private keys to sessionStorage so regulator can decrypt during this session
       const elgamalKeys = {
         keyA: keypairA.privateKey.toString(),
         keyB: keypairB.privateKey.toString(),
@@ -514,13 +656,8 @@ export function useSchemeB(
         mintB: p.assetBMint.toBase58(),
         savedAt: new Date().toISOString(),
       };
-      localStorage.setItem('nexum_elgamal_keys', JSON.stringify(elgamalKeys));
-      log("✓ ElGamal private keys saved to localStorage (for regulator decryption)");
-      log(`  Key A (Party A): ${keypairA.privateKey.toString().slice(0, 20)}...`);
-      log(`  Key B (Party B): ${keypairB.privateKey.toString().slice(0, 20)}...`);
-      console.log('[Nexum] ElGamal private keys (copy for regulator):');
-      console.log('  Key A:', keypairA.privateKey.toString());
-      console.log('  Key B:', keypairB.privateKey.toString());
+      sessionStorage.setItem('nexum_elgamal_keys', JSON.stringify(elgamalKeys));
+      log("✓ ElGamal private keys saved to session storage (cleared when tab closes)");
 
       const { lo: b_lo, hi: b_hi } = splitAmount(p.amountB);
 
@@ -547,14 +684,14 @@ export function useSchemeB(
       log(`✓ Proof B: ${proofB.proofBytes.length} bytes`);
 
       log("Encrypting balances with ElGamal...");
-      const ct_a_lo = elgamalEncrypt(0n, keypairA.publicKey);
-      const ct_a_hi = elgamalEncrypt(0n, keypairA.publicKey);
-      const audit_a_lo = elgamalEncrypt(BigInt(tLo), keypairA.publicKey);
-      const audit_a_hi = elgamalEncrypt(BigInt(tHi), keypairA.publicKey);
-      const ct_b_lo = elgamalEncrypt(BigInt(b_lo), keypairB.publicKey);
-      const ct_b_hi = elgamalEncrypt(BigInt(b_hi), keypairB.publicKey);
-      const audit_b_lo = elgamalEncrypt(0n, keypairB.publicKey);
-      const audit_b_hi = elgamalEncrypt(0n, keypairB.publicKey);
+      const { ciphertext: ct_a_lo, randomness: r_a_lo } = elgamalEncrypt(0n, keypairA.publicKey);
+      const { ciphertext: ct_a_hi, randomness: r_a_hi } = elgamalEncrypt(0n, keypairA.publicKey);
+      const { ciphertext: audit_a_lo } = elgamalEncrypt(BigInt(tLo), keypairA.publicKey);
+      const { ciphertext: audit_a_hi } = elgamalEncrypt(BigInt(tHi), keypairA.publicKey);
+      const { ciphertext: ct_b_lo, randomness: r_b_lo } = elgamalEncrypt(BigInt(b_lo), keypairB.publicKey);
+      const { ciphertext: ct_b_hi, randomness: r_b_hi } = elgamalEncrypt(BigInt(b_hi), keypairB.publicKey);
+      const { ciphertext: audit_b_lo } = elgamalEncrypt(0n, keypairB.publicKey);
+      const { ciphertext: audit_b_hi } = elgamalEncrypt(0n, keypairB.publicKey);
       log("✓ 8 ciphertexts generated");
 
       const chunk0 = proofA.proofBytes;
@@ -584,10 +721,10 @@ export function useSchemeB(
           if (!isZero) {
             log("Encrypting amounts for regulator...");
             const regPoint = unpackRegulatorPubkey(new Uint8Array(regPubkeyBytes));
-            const reg_ct_a_lo = elgamalEncrypt(BigInt(tLo), regPoint);
-            const reg_ct_a_hi = elgamalEncrypt(BigInt(tHi), regPoint);
-            const reg_ct_b_lo = elgamalEncrypt(BigInt(b_lo), regPoint);
-            const reg_ct_b_hi = elgamalEncrypt(BigInt(b_hi), regPoint);
+            const { ciphertext: reg_ct_a_lo } = elgamalEncrypt(BigInt(tLo), regPoint);
+            const { ciphertext: reg_ct_a_hi } = elgamalEncrypt(BigInt(tHi), regPoint);
+            const { ciphertext: reg_ct_b_lo } = elgamalEncrypt(BigInt(b_lo), regPoint);
+            const { ciphertext: reg_ct_b_hi } = elgamalEncrypt(BigInt(b_hi), regPoint);
             chunk4 = [
               ...Array.from(serializeCiphertext(reg_ct_a_lo)),
               ...Array.from(serializeCiphertext(reg_ct_a_hi)),
@@ -646,6 +783,7 @@ export function useSchemeB(
           })
           .accounts({
             proofData: proofDataPda,
+            commitSlot: p.commitSlotId,
             authority: wallet.publicKey,
           })
           .transaction();
@@ -665,6 +803,10 @@ export function useSchemeB(
           commitmentHashLo: new anchor.BN(proofA.publicSignals[0]),
           commitmentHashHi: new anchor.BN(proofA.publicSignals[1]),
           settlementNonce: new anchor.BN(settlementNonce.toString()),
+          newRALo: randomnessToBytes(r_a_lo),
+          newRAHi: randomnessToBytes(r_a_hi),
+          newRBLo: randomnessToBytes(r_b_lo),
+          newRBHi: randomnessToBytes(r_b_hi),
         })
         .preInstructions([
           ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
@@ -801,18 +943,56 @@ export function useSchemeB(
       }
     }
     log(`Depositing ${amount} tokens to vault...`);
-    const result = await deposit(program, wallet, { mint, amount });
-    log(`✓ Deposited — TX: ${result.tx_signature}`);
-    return result.tx_signature;
+    // Generate ElGamal keypair for encrypting the deposit amount
+    const depositKeypair = generateKeypair();
+    const { ciphertext: depCtLo, randomness: depRLo } = elgamalEncrypt(
+      amount & 0xFFFFFFFFn, depositKeypair.publicKey
+    );
+    const { ciphertext: depCtHi, randomness: depRHi } = elgamalEncrypt(
+      amount >> 32n, depositKeypair.publicKey
+    );
+    const depResult = await deposit(program, wallet, {
+      mint,
+      amount,
+      initialCtLo: Array.from(serializeCiphertext(depCtLo)),
+      initialCtHi: Array.from(serializeCiphertext(depCtHi)),
+      initialRLo: randomnessToBytes(depRLo),
+      initialRHi: randomnessToBytes(depRHi),
+    });
+    // Save keypair to sessionStorage so withdraw can decrypt later
+    const depositKeys = {
+      keyA: depositKeypair.privateKey.toString(),
+      partyA: wallet.publicKey.toBase58(),
+      mintA: mint.toBase58(),
+      savedAt: new Date().toISOString(),
+    };
+    sessionStorage.setItem('nexum_elgamal_keys', JSON.stringify(depositKeys));
+    log(`✓ Deposited — TX: ${depResult.tx_signature}`);
+    return depResult.tx_signature;
   }, [program, wallet, log]);
 
   const withdrawFromVault = useCallback(async (mintStr: string, amount: bigint): Promise<string> => {
     if (!program || !wallet) throw new Error("Wallet not connected");
     const mint = new PublicKey(mintStr);
-    log(`Withdrawing ${amount} tokens from vault...`);
-    const result = await withdraw(program, wallet, { mint, amount });
-    log(`✓ Withdrawn — TX: ${result.tx_signature}`);
-    return result.tx_signature;
+    log(`Generating withdraw ZK proof (decrypting balance + proving sufficiency)...`);
+    try {
+      const proofResult = await browserGenerateWithdrawProof(program, wallet.publicKey, mint, amount);
+      log(`✓ Withdraw proof generated (${proofResult.proofBytes.length} bytes)`);
+      log(`Submitting withdraw TX...`);
+      const result = await withdraw(program, wallet, {
+        mint, amount,
+        proof: proofResult.proofBytes,
+        newCtLo: proofResult.newCtLo,
+        newCtHi: proofResult.newCtHi,
+        newRLo: proofResult.newRLo,
+        newRHi: proofResult.newRHi,
+      });
+      log(`✓ Withdrawn — TX: ${result.tx_signature}`);
+      return result.tx_signature;
+    } catch (e: any) {
+      log(`Withdraw failed: ${e.message}`);
+      throw e;
+    }
   }, [program, wallet, log]);
 
   useEffect(() => {

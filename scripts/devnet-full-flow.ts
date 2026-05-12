@@ -239,16 +239,16 @@ async function main() {
   // ElGamal encryption
   console.log("  Encrypting balances with ElGamal...");
   // Party A: new balance = 0 (sent everything), old balance = transfer_amount (for audit)
-  const ct_a_lo = elgamalEncrypt(0n, keypairA.publicKey);
-  const ct_a_hi = elgamalEncrypt(0n, keypairA.publicKey);
-  const audit_a_lo = elgamalEncrypt(BigInt(Number(transfer_lo)), keypairA.publicKey);
-  const audit_a_hi = elgamalEncrypt(BigInt(Number(transfer_hi)), keypairA.publicKey);
+  const { ciphertext: ct_a_lo } = elgamalEncrypt(0n, keypairA.publicKey);
+  const { ciphertext: ct_a_hi } = elgamalEncrypt(0n, keypairA.publicKey);
+  const { ciphertext: audit_a_lo } = elgamalEncrypt(BigInt(Number(transfer_lo)), keypairA.publicKey);
+  const { ciphertext: audit_a_hi } = elgamalEncrypt(BigInt(Number(transfer_hi)), keypairA.publicKey);
 
   // Party B: new balance = transfer_amount (received), old balance = 0 (for audit)
-  const ct_b_lo = elgamalEncrypt(BigInt(Number(transfer_lo)), keypairB.publicKey);
-  const ct_b_hi = elgamalEncrypt(BigInt(Number(transfer_hi)), keypairB.publicKey);
-  const audit_b_lo = elgamalEncrypt(0n, keypairB.publicKey);
-  const audit_b_hi = elgamalEncrypt(0n, keypairB.publicKey);
+  const { ciphertext: ct_b_lo } = elgamalEncrypt(BigInt(Number(transfer_lo)), keypairB.publicKey);
+  const { ciphertext: ct_b_hi } = elgamalEncrypt(BigInt(Number(transfer_hi)), keypairB.publicKey);
+  const { ciphertext: audit_b_lo } = elgamalEncrypt(0n, keypairB.publicKey);
+  const { ciphertext: audit_b_hi } = elgamalEncrypt(0n, keypairB.publicKey);
   console.log("  ✓ Balances encrypted (8 ciphertexts)");
 
   // Build proof chunks
@@ -303,6 +303,7 @@ async function main() {
       })
       .accounts({
         proofData: proofDataPda,
+        commitSlot: commitSlotPda,
         authority: initKp.publicKey,
       })
       .rpc({ commitment: "confirmed" });
