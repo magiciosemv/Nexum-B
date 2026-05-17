@@ -10,7 +10,7 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
 
-const RPC = "https://devnet.helius-rpc.com/?api-key=506b80b3-cae1-4a10-bd37-b048aa5dd8a5";
+const RPC = process.env.ANCHOR_PROVIDER_URL || "https://devnet.helius-rpc.com";
 const PROGRAM_ID = new PublicKey("6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r");
 
 // PDA helpers

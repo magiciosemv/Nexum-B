@@ -17,7 +17,7 @@ export default defineConfig({
       "/rpc": {
         target: "https://devnet.helius-rpc.com",
         changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/rpc/, "/?api-key=506b80b3-cae1-4a10-bd37-b048aa5dd8a5"),
+        rewrite: (p) => p.replace(/^\/rpc/, `/?api-key=${process.env.VITE_HELIUS_API_KEY || ""}`),
       },
     },
   },

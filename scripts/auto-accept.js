@@ -61,7 +61,7 @@ const anchor = require('@coral-xyz/anchor');
 const { Connection, PublicKey, SystemProgram, Keypair } = require('@solana/web3.js');
 
 // ── 4. Config ──────────────────────────────────────────────────────────
-const RPC = process.env.ANCHOR_PROVIDER_URL || 'https://devnet.helius-rpc.com/?api-key=506b80b3-cae1-4a10-bd37-b048aa5dd8a5';
+const RPC = process.env.ANCHOR_PROVIDER_URL || 'REDACTED_HELIUS_URL';
 const PROGRAM_ID = new PublicKey('6n1NbHJuEkyaJZtnHqrExBk2BD6HyujvntbTE5ZSeX9r');
 const LEDGER_A = new PublicKey(process.argv[2] || (() => { console.error('Usage: node auto-accept.js <LEDGER_A_ADDRESS>'); process.exit(1); })());
 const CONFIG = new PublicKey('CNM1YpLiFdeKj2MC3F6q18fUhpCkADXScGciz9C7Lmm5');

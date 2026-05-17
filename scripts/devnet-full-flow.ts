@@ -34,7 +34,7 @@ import * as idlJson from "../target/idl/nexum_pool.json";
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const RPC = "https://devnet.helius-rpc.com/?api-key=506b80b3-cae1-4a10-bd37-b048aa5dd8a5";
+const RPC = process.env.ANCHOR_PROVIDER_URL || "https://devnet.helius-rpc.com";
 const PROGRAM_ID = new PublicKey("BN9cg69CyigYuczJNjK3MVWRHdVMELaN55wpJz8KKi4P");
 const ZK_VERIFIER_ID = new PublicKey("AytMjF35K8xDnrs7STj3keJzEvDvHGqJv2VQBQN3yfCi");
 const TRANSFER_AMOUNT = 1_000_000n; // 1M units

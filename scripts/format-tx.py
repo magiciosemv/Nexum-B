@@ -10,7 +10,7 @@
 import json, sys, urllib.request
 from datetime import datetime, timezone
 
-RPC = "https://devnet.helius-rpc.com/?api-key=506b80b3-cae1-4a10-bd37-b048aa5dd8a5"
+RPC = os.environ.get("ANCHOR_PROVIDER_URL", "https://devnet.helius-rpc.com")
 
 LABELS = {
     "CjnKTv7fxuEDU91n1nkcLe536kfbvV7o4cA9mJAA68Ue": "Party A (signer)",

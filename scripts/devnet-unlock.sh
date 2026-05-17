@@ -15,7 +15,7 @@ echo "=== Checking ledger states ==="
 # Check and display current status
 $NODE_PATH/../../bin/node -e "
 const { Connection, PublicKey } = require('@solana/web3.js');
-const RPC = 'https://devnet.helius-rpc.com/?api-key=506b80b3-cae1-4a10-bd37-b048aa5dd8a5';
+const RPC = process.env.ANCHOR_PROVIDER_URL || 'https://devnet.helius-rpc.com';
 const PROGRAM_ID = new PublicKey('BN9cg69CyigYuczJNjK3MVWRHdVMELaN55wpJz8KKi4P');
 const MINT_A = new PublicKey('B31JoQhMFF2TrSJMdiSqCRGMj4jR8TD8sNzNGn4T4qQw');
 const MINT_B = new PublicKey('Pxm31BeJ9rKsHVjrRedNZse4qTxKpFzG8v2NE87JP6k');
@@ -54,7 +54,7 @@ const anchor = require('@coral-xyz/anchor');
 const { Keypair, PublicKey, SystemProgram } = require('@solana/web3.js');
 const fs = require('fs');
 const idlJson = require('./target/idl/nexum_pool.json');
-const RPC = 'https://devnet.helius-rpc.com/?api-key=506b80b3-cae1-4a10-bd37-b048aa5dd8a5';
+const RPC = process.env.ANCHOR_PROVIDER_URL || 'https://devnet.helius-rpc.com';
 const PROGRAM_ID = new PublicKey('BN9cg69CyigYuczJNjK3MVWRHdVMELaN55wpJz8KKi4P');
 const MINT_A = new PublicKey('B31JoQhMFF2TrSJMdiSqCRGMj4jR8TD8sNzNGn4T4qQw');
 const MINT_B = new PublicKey('Pxm31BeJ9rKsHVjrRedNZse4qTxKpFzG8v2NE87JP6k');
